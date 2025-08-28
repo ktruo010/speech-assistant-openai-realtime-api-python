@@ -8,24 +8,34 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.websockets import WebSocketDisconnect
 from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
 from dotenv import load_dotenv
+from googleapiclient.discovery import build
+import logging
 
 load_dotenv()
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+GOOGLE_CSE_ID = os.getenv('GOOGLE_CSE_ID')
 PORT = int(os.getenv('PORT', 5050))
 SYSTEM_MESSAGE = (
     "You are a helpful and bubbly AI assistant who loves to chat about "
     "anything the user is interested in and is prepared to offer them facts. "
     "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
-    "Always stay positive, but work in a joke when appropriate."
+    "Always stay positive, but work in a joke when appropriate. "
+    "You have access to web search to find current information when asked."
 )
 VOICE = 'alloy'
 LOG_EVENT_TYPES = [
     'error', 'response.content.done', 'rate_limits.updated',
     'response.done', 'input_audio_buffer.committed',
     'input_audio_buffer.speech_stopped', 'input_audio_buffer.speech_started',
-    'session.created'
+    'session.created', 'response.function_call_arguments.done',
+    'response.output_item.added'
 ]
 SHOW_TIMING_MATH = False
 
@@ -33,6 +43,75 @@ app = FastAPI()
 
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
+
+if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
+    logger.warning('Google Search API credentials not found. Web search will be disabled.')
+    logger.warning('To enable web search, set GOOGLE_API_KEY and GOOGLE_CSE_ID in the .env file.')
+
+# Tool definitions for OpenAI
+TOOLS = [
+    {
+        "type": "function",
+        "name": "web_search",
+        "description": "Search the web for current information about any topic",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query to look up on the web"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of search results to return (default: 3)",
+                    "default": 3
+                }
+            },
+            "required": ["query"]
+        }
+    }
+]
+
+def web_search_sync(query: str, max_results: int = 3) -> str:
+    """Perform a web search using Google Custom Search API."""
+    if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
+        return "Web search is not configured. Please set up Google API credentials."
+    
+    try:
+        logger.info(f"Performing Google search for: {query}")
+        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
+        
+        # Execute the search
+        result = service.cse().list(
+            q=query,
+            cx=GOOGLE_CSE_ID,
+            num=min(max_results, 10)  # Google API max is 10 per request
+        ).execute()
+        
+        items = result.get('items', [])
+        
+        if not items:
+            return "No search results found."
+        
+        # Format results for voice response
+        formatted_results = f"I found {len(items)} results for '{query}'. "
+        for i, item in enumerate(items[:max_results], 1):
+            title = item.get('title', '')
+            snippet = item.get('snippet', '')
+            formatted_results += f"Result {i}: {title}. {snippet[:200]}... "
+        
+        logger.info(f"Search completed with {len(items)} results")
+        return formatted_results
+    except Exception as e:
+        logger.error(f"Error during Google search: {str(e)}")
+        return f"Sorry, I encountered an error while searching: {str(e)}"
+
+async def web_search(query: str, max_results: int = 3) -> str:
+    """Async wrapper for web search."""
+    # Run the synchronous function in a thread pool to avoid blocking
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, web_search_sync, query, max_results)
 
 @app.get("/", response_class=JSONResponse)
 async def index_page():
@@ -132,6 +211,55 @@ async def handle_media_stream(websocket: WebSocket):
 
                         await send_mark(websocket, stream_sid)
 
+                    # Handle function calls
+                    if response.get('type') == 'response.function_call_arguments.done':
+                        logger.info("Function call requested")
+                        event_id = response.get('event_id')
+                        item_id = response.get('item_id')
+                        call_id = response.get('call_id')
+                        name = response.get('name')
+                        arguments = response.get('arguments')
+                        
+                        try:
+                            args = json.loads(arguments) if arguments else {}
+                            logger.info(f"Calling function {name} with arguments: {args}")
+                            
+                            # Execute the function based on the name
+                            if name == 'web_search':
+                                query = args.get('query', '')
+                                max_results = args.get('max_results', 3)
+                                result = await web_search(query, max_results)
+                                
+                                # Send function output back to OpenAI
+                                function_output = {
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": call_id,
+                                        "output": result
+                                    }
+                                }
+                                await openai_ws.send(json.dumps(function_output))
+                                
+                                # Trigger a response generation
+                                await openai_ws.send(json.dumps({"type": "response.create"}))
+                                logger.info(f"Function {name} completed and response triggered")
+                            else:
+                                logger.warning(f"Unknown function called: {name}")
+                        except Exception as e:
+                            logger.error(f"Error executing function {name}: {str(e)}")
+                            # Send error back to OpenAI
+                            error_output = {
+                                "type": "conversation.item.create",
+                                "item": {
+                                    "type": "function_call_output",
+                                    "call_id": call_id,
+                                    "output": f"Error executing function: {str(e)}"
+                                }
+                            }
+                            await openai_ws.send(json.dumps(error_output))
+                            await openai_ws.send(json.dumps({"type": "response.create"}))
+
                     # Trigger an interruption. Your use case might work better using `input_audio_buffer.speech_stopped`, or combining the two.
                     if response.get('type') == 'input_audio_buffer.speech_started':
                         print("Speech started detected.")
@@ -214,6 +342,8 @@ async def initialize_session(openai_ws):
             "instructions": SYSTEM_MESSAGE,
             "modalities": ["text", "audio"],
             "temperature": 0.8,
+            "tools": TOOLS,
+            "tool_choice": "auto"
         }
     }
     print('Sending session update:', json.dumps(session_update))

@@ -25,6 +25,8 @@ jobs:
     - name: Inject env vars
       run: |
         echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
+        echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" >> .env
+        echo "GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }}" >> .env
 
     - name: Install dependencies
       run: |
