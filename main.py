@@ -1481,13 +1481,52 @@ async def handle_voice_passcode_stream(websocket: WebSocket):
         }
         await openai_ws.send(json.dumps(session_update))
         
-        # Don't send any initial prompt - just wait for the user to speak
-        # This prevents OpenAI from generating any audio response initially
+        # Send a prompt to listen for the passcode
+        initial_prompt = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": f"Listen for someone to say the numbers: {PASSCODE}. When you hear any numbers spoken, check if they match exactly."
+                    }
+                ]
+            }
+        }
+        await openai_ws.send(json.dumps(initial_prompt))
+        
+        # Track silence to trigger response
+        audio_received = False
+        silence_duration = 0
+        last_audio_time = asyncio.get_event_loop().time()
+        
+        async def check_silence():
+            """Check for silence and trigger response generation."""
+            nonlocal audio_received, silence_duration, last_audio_time
+            while True:
+                await asyncio.sleep(0.5)
+                current_time = asyncio.get_event_loop().time()
+                if audio_received and (current_time - last_audio_time) > 1.5:
+                    # User stopped speaking for 1.5 seconds, trigger response
+                    if openai_ws.open:
+                        await openai_ws.send(json.dumps({
+                            "type": "input_audio_buffer.commit"
+                        }))
+                        await openai_ws.send(json.dumps({
+                            "type": "response.create"
+                        }))
+                        audio_received = False
+                        break
         
         async def receive_from_twilio():
             """Receive audio from Twilio and forward to OpenAI."""
-            nonlocal stream_sid, call_sid, switch_to_dtmf
+            nonlocal stream_sid, call_sid, switch_to_dtmf, audio_received, last_audio_time
             try:
+                # Start silence checker
+                silence_task = asyncio.create_task(check_silence())
+                
                 async for message in websocket.iter_text():
                     data = json.loads(message)
                     if data['event'] == 'media' and openai_ws.open:
@@ -1496,6 +1535,8 @@ async def handle_voice_passcode_stream(websocket: WebSocket):
                             "audio": data['media']['payload']
                         }
                         await openai_ws.send(json.dumps(audio_append))
+                        audio_received = True
+                        last_audio_time = asyncio.get_event_loop().time()
                     elif data['event'] == 'start':
                         stream_sid = data['start']['streamSid']
                         call_sid = data['start'].get('callSid', stream_sid)
@@ -1509,12 +1550,17 @@ async def handle_voice_passcode_stream(websocket: WebSocket):
                             switch_to_dtmf = True
                             if call_sid:
                                 voice_passcode_results[call_sid] = 'SWITCH_TO_DTMF'
+                            silence_task.cancel()
                             await websocket.close()
                             return
             except WebSocketDisconnect:
                 print("Voice passcode client disconnected.")
+                silence_task.cancel()
                 if openai_ws.open:
                     await openai_ws.close()
+            except Exception as e:
+                logger.error(f"Error in receive_from_twilio: {e}")
+                silence_task.cancel()
         
         async def process_openai_response():
             """Process OpenAI responses for passcode verification."""
