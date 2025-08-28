@@ -327,12 +327,8 @@ async def handle_incoming_call(request: Request):
         response.say("No passcode received. Goodbye.")
         response.hangup()
     else:
-        # No passcode required, connect directly with greeting based on language
-        if LANGUAGE == 'vi':
-            response.say("Xin chào, Tôi có thể giúp gì cho bạn?", language="vi-VN")
-        else:
-            response.say("Hello, how can I help you today?")
-        
+        # No passcode required, connect directly
+        # Skip Twilio greeting and let OpenAI handle the greeting
         connect = Connect()
         connect.stream(url=f'wss://{host}/media-stream')
         response.append(connect)
@@ -357,12 +353,7 @@ async def verify_passcode(request: Request):
         logger.info("Passcode verified successfully")
         print("\n✅ Passcode verified successfully")
         
-        # After successful passcode, greet in the configured language
-        if LANGUAGE == 'vi':
-            response.say("Xin chào, Tôi có thể giúp gì cho bạn?", language="vi-VN")
-        else:
-            response.say("Hello, how can I help you today?")
-        
+        # Skip Twilio greeting and connect directly - let OpenAI handle the greeting
         connect = Connect()
         connect.stream(url=f'wss://{host}/media-stream')
         response.append(connect)
@@ -666,6 +657,12 @@ async def handle_media_stream(websocket: WebSocket):
 
 async def send_initial_conversation_item(openai_ws):
     """Send initial conversation item if AI talks first."""
+    # Use appropriate greeting based on language
+    if LANGUAGE == 'vi':
+        greeting_text = "Chào bạn và nói: Xin chào, tôi có thể giúp gì cho bạn hôm nay?"
+    else:
+        greeting_text = "Greet the user and say: Hello, how can I help you today?"
+    
     initial_conversation_item = {
         "type": "conversation.item.create",
         "item": {
@@ -674,7 +671,7 @@ async def send_initial_conversation_item(openai_ws):
             "content": [
                 {
                     "type": "input_text",
-                    "text": "Hello, how can I help you today?'"
+                    "text": greeting_text
                 }
             ]
         }
@@ -702,8 +699,8 @@ async def initialize_session(openai_ws):
     print('Sending session update:', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
 
-    # Uncomment the next line to have the AI speak first
-    # await send_initial_conversation_item(openai_ws)
+    # Have the AI speak first with proper greeting
+    await send_initial_conversation_item(openai_ws)
 
 if __name__ == "__main__":
     import uvicorn
