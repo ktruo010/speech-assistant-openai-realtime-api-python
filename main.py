@@ -37,6 +37,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 GOOGLE_CSE_ID = os.getenv('GOOGLE_CSE_ID')
 PORT = int(os.getenv('PORT', 5050))
+LANGUAGE = os.getenv('LANGUAGE', 'vi')  # Default to Vietnamese
 MAX_CALL_DURATION = int(os.getenv('MAX_CALL_DURATION', 3600))  # Default 1 hour (3600 seconds)
 PASSCODE = os.getenv('PASSCODE')  # Optional passcode for call authentication
 MAX_PASSCODE_ATTEMPTS = int(os.getenv('MAX_PASSCODE_ATTEMPTS', 3))  # Max attempts before hanging up
@@ -63,15 +64,26 @@ formatter = TimezoneFormatter(
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-# System message in Vietnamese
-SYSTEM_MESSAGE = (
-    "Bạn là một trợ lý AI thân thiện và nhiệt tình, sẵn sàng trò chuyện về "
-    "bất kỳ chủ đề nào mà người dùng quan tâm và cung cấp thông tin hữu ích. "
-    "Bạn có khả năng kể chuyện cười vui vẻ khi phù hợp. "
-    "Luôn giữ thái độ tích cực và hỗ trợ người dùng một cách tốt nhất. "
-    "Bạn có thể tìm kiếm web để cung cấp thông tin mới nhất khi được yêu cầu. "
-    "QUAN TRỌNG: Luôn trả lời bằng tiếng Việt."
-)
+# System messages for different languages
+SYSTEM_MESSAGES = {
+    'vi': (
+        "Bạn là một trợ lý AI thân thiện và nhiệt tình, sẵn sàng trò chuyện về "
+        "bất kỳ chủ đề nào mà người dùng quan tâm và cung cấp thông tin hữu ích. "
+        "Bạn có khả năng kể chuyện cười vui vẻ khi phù hợp. "
+        "Luôn giữ thái độ tích cực và hỗ trợ người dùng một cách tốt nhất. "
+        "Bạn có thể tìm kiếm web để cung cấp thông tin mới nhất khi được yêu cầu. "
+        "QUAN TRỌNG: Luôn trả lời bằng tiếng Việt trừ khi người dùng yêu cầu ngôn ngữ khác."
+    ),
+    'en': (
+        "You are a helpful and bubbly AI assistant who loves to chat about "
+        "anything the user is interested in and is prepared to offer them facts. "
+        "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
+        "Always stay positive, but work in a joke when appropriate. "
+        "You have access to web search to find current information when asked."
+    )
+}
+
+SYSTEM_MESSAGE = SYSTEM_MESSAGES.get(LANGUAGE, SYSTEM_MESSAGES['en'])
 VOICE = 'alloy'
 LOG_EVENT_TYPES = [
     'error', 'response.content.done', 'rate_limits.updated',
@@ -130,7 +142,9 @@ TOOLS = [
 def web_search_sync(query: str, max_results: int = 3) -> str:
     """Perform a web search using Google Custom Search API."""
     if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
-        return "Tìm kiếm web chưa được cấu hình. Vui lòng thiết lập Google API."
+        if LANGUAGE == 'vi':
+            return "Tìm kiếm web chưa được cấu hình. Vui lòng thiết lập Google API."
+        return "Web search is not configured. Please set up Google API credentials."
     
     try:
         # Enhanced console logging for web search
@@ -150,14 +164,23 @@ def web_search_sync(query: str, max_results: int = 3) -> str:
         items = result.get('items', [])
         
         if not items:
-            return "Không tìm thấy kết quả nào."
+            if LANGUAGE == 'vi':
+                return "Không tìm thấy kết quả nào."
+            return "No search results found."
         
-        # Format results for voice response in Vietnamese
-        formatted_results = f"Tôi tìm thấy {len(items)} kết quả cho '{query}'. "
-        for i, item in enumerate(items[:max_results], 1):
-            title = item.get('title', '')
-            snippet = item.get('snippet', '')
-            formatted_results += f"Kết quả {i}: {title}. {snippet[:200]}... "
+        # Format results for voice response
+        if LANGUAGE == 'vi':
+            formatted_results = f"Tôi tìm thấy {len(items)} kết quả cho '{query}'. "
+            for i, item in enumerate(items[:max_results], 1):
+                title = item.get('title', '')
+                snippet = item.get('snippet', '')
+                formatted_results += f"Kết quả {i}: {title}. {snippet[:200]}... "
+        else:
+            formatted_results = f"I found {len(items)} results for '{query}'. "
+            for i, item in enumerate(items[:max_results], 1):
+                title = item.get('title', '')
+                snippet = item.get('snippet', '')
+                formatted_results += f"Result {i}: {title}. {snippet[:200]}... "
         
         logger.info(f"Search completed with {len(items)} results")
         print(f"Search completed. Found {len(items)} results.")
@@ -184,7 +207,7 @@ async def handle_incoming_call(request: Request):
     response = VoiceResponse()
     host = request.url.hostname
     
-    # If passcode is configured, ask for it
+    # If passcode is configured, ask for it immediately
     if PASSCODE:
         gather = response.gather(
             num_digits=len(PASSCODE),
@@ -193,16 +216,28 @@ async def handle_incoming_call(request: Request):
             timeout=10,
             finish_on_key='#'
         )
-        gather.say("Xin chào. Vui lòng nhập mật khẩu", language="vi")
+        # Just ask for passcode directly
+        if LANGUAGE == 'vi':
+            gather.say("Vui lòng nhập mật khẩu", language="vi-VN")
+        else:
+            gather.say("Please enter the passcode")
         
-        # If user doesn't enter anything, repeat the prompt
-        response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi")
+        # If user doesn't enter anything, hang up
+        if LANGUAGE == 'vi':
+            response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi-VN")
+        else:
+            response.say("No passcode received. Goodbye.")
         response.hangup()
     else:
         # No passcode required, connect directly
-        response.say("Xin chào", language="vi")
-        response.pause(length=1)
-        response.say("Tôi có thể giúp gì cho bạn?", language="vi")
+        if LANGUAGE == 'vi':
+            response.say("Xin chào", language="vi-VN")
+            response.pause(length=1)
+            response.say("Tôi có thể giúp gì cho bạn?", language="vi-VN")
+        else:
+            response.say("Hello")
+            response.pause(length=1)
+            response.say("How can I help you today?")
         
         connect = Connect()
         connect.stream(url=f'wss://{host}/media-stream')
@@ -228,9 +263,14 @@ async def verify_passcode(request: Request):
         logger.info("Passcode verified successfully")
         print("\n✅ Passcode verified successfully")
         
-        response.say("Mật khẩu đúng. Đang kết nối.", language="vi")
-        response.pause(length=1)
-        response.say("Tôi có thể giúp gì cho bạn?", language="vi")
+        if LANGUAGE == 'vi':
+            response.say("Mật khẩu đúng. Đang kết nối.", language="vi-VN")
+            response.pause(length=1)
+            response.say("Tôi có thể giúp gì cho bạn?", language="vi-VN")
+        else:
+            response.say("Passcode correct. Connecting.")
+            response.pause(length=1)
+            response.say("How can I help you today?")
         
         connect = Connect()
         connect.stream(url=f'wss://{host}/media-stream')
@@ -251,17 +291,26 @@ async def verify_passcode(request: Request):
             )
             
             remaining_attempts = MAX_PASSCODE_ATTEMPTS - attempt
-            gather.say(f"Mật khẩu không đúng. Bạn còn {remaining_attempts} lần thử. Vui lòng nhập lại mật khẩu.", language="vi")
+            if LANGUAGE == 'vi':
+                gather.say(f"Mật khẩu không đúng. Bạn còn {remaining_attempts} lần thử. Vui lòng nhập lại mật khẩu.", language="vi-VN")
+            else:
+                gather.say(f"Incorrect passcode. You have {remaining_attempts} attempts remaining. Please enter the passcode again.")
             
             # If user doesn't enter anything
-            response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi")
+            if LANGUAGE == 'vi':
+                response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi-VN")
+            else:
+                response.say("No passcode received. Goodbye.")  
             response.hangup()
         else:
             # Max attempts reached - hang up
             logger.warning("Max passcode attempts reached. Hanging up.")
             print("\n🚫 Max passcode attempts reached. Hanging up.")
             
-            response.say("Đã vượt quá số lần thử cho phép. Tạm biệt.", language="vi")
+            if LANGUAGE == 'vi':
+                response.say("Đã vượt quá số lần thử cho phép. Tạm biệt.", language="vi-VN")
+            else:
+                response.say("Maximum attempts exceeded. Goodbye.")
             response.hangup()
     
     return HTMLResponse(content=str(response), media_type="application/xml")
@@ -319,7 +368,7 @@ async def handle_media_stream(websocket: WebSocket):
                             "role": "assistant",
                             "content": [{
                                 "type": "input_text",
-                                "text": "Xin lỗi, cuộc gọi đã đạt giới hạn thời gian. Cảm ơn bạn đã gọi. Tạm biệt!"
+                                "text": "Xin lỗi, cuộc gọi đã đạt giới hạn thời gian. Cảm ơn bạn đã gọi. Tạm biệt!" if LANGUAGE == 'vi' else "I'm sorry, but we've reached the call time limit. Thank you for calling. Goodbye!"
                             }]
                         }
                     }
