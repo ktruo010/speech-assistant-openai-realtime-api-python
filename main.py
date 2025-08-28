@@ -979,10 +979,11 @@ async def verify_passcode_speech(request: Request):
     logger.info(f"{input_type} passcode attempt {attempt}: {'*' * len(received_input)} (confidence: {confidence if not digits else 'N/A'})")
     print(f"\n📝 {input_type} input received: {'*' * len(received_input)}")
     
-    # Clean up speech result - remove spaces and convert to string
+    # Clean up speech result - remove spaces, punctuation and convert to string
     if speech_result:
-        # Remove spaces and normalize
-        received_input = ''.join(speech_result.split())
+        # Remove spaces and punctuation, keep only digits
+        import re
+        received_input = re.sub(r'[^0-9]', '', speech_result)
         logger.info(f"Normalized speech input: '{received_input}' (expected: {'*' * len(PASSCODE)})")
         print(f"📊 After normalization: '{received_input}' (expected length: {len(PASSCODE)})")
     
