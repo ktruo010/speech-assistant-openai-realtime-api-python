@@ -445,16 +445,14 @@ def get_directions(origin: str, destination: str, mode: str = "driving") -> str:
     try:
         if not GOOGLE_API_KEY:
             # Fallback to general search for directions
-            return google_search_fallback(f"directions from {origin} to {destination} {mode}")
+            return google_search_fallback(f"driving directions distance time from {origin} to {destination} maps")
         
         logger.info(f"Getting directions from {origin} to {destination}")
         print(f"\n{'='*60}")
         print(f"----------- Directions: {origin} → {destination} --------------")
         print("="*60)
         
-        service = build("maps", "v1", developerKey=GOOGLE_API_KEY)
-        
-        # Make request to Directions API
+        # Directions API doesn't use the build() method - use direct HTTP request
         import requests
         url = "https://maps.googleapis.com/maps/api/directions/json"
         params = {
@@ -513,8 +511,9 @@ def get_directions(origin: str, destination: str, mode: str = "driving") -> str:
         
     except Exception as e:
         logger.error(f"Error getting directions: {str(e)}, falling back to general search")
-        # Fallback to general search on error
-        return google_search_fallback(f"directions from {origin} to {destination} {mode}")
+        # Fallback to general search on error with improved query
+        fallback_query = f"driving directions distance time from {origin} to {destination} maps"
+        return google_search_fallback(fallback_query)
 
 def search_youtube(query: str, max_results: int = 3) -> str:
     """Search YouTube videos using YouTube Data API v3."""
