@@ -1340,7 +1340,7 @@ async def handle_media_stream(websocket: WebSocket):
                             cumulative_cost = total_input_cost + total_output_cost
                             
                             # Log token usage with costs in requested format
-                            print(f"\nToken update [{GPT_MODEL}] - Input: {total_tokens['input_tokens']:,} (${'${:.2f}'.format(total_input_cost)}), Output: {total_tokens['output_tokens']:,} (${'${:.2f}'.format(total_output_cost)}), Total: {total_tokens['total_tokens']:,} (${'${:.2f}'.format(cumulative_cost)})")
+                            print(f"----- Token update [{GPT_MODEL}] - Input: {total_tokens['input_tokens']:,} (${'${:.2f}'.format(total_input_cost)}), Output: {total_tokens['output_tokens']:,} (${'${:.2f}'.format(total_output_cost)}), Total: {total_tokens['total_tokens']:,} (${'${:.2f}'.format(cumulative_cost)})")
                     
                     # Track rate limits
                     if response.get('type') == 'rate_limits.updated':
