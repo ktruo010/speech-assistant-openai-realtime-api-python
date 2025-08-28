@@ -45,3 +45,4 @@ jobs:
         pm2 start main.py --name "speech-assistant" --interpreter python3
         pm2 save
         pm2 status speech-assistant
+        
