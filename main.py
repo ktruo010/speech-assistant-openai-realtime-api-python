@@ -22,13 +22,29 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 GOOGLE_CSE_ID = os.getenv('GOOGLE_CSE_ID')
 PORT = int(os.getenv('PORT', 5050))
-SYSTEM_MESSAGE = (
-    "You are a helpful and bubbly AI assistant who loves to chat about "
-    "anything the user is interested in and is prepared to offer them facts. "
-    "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
-    "Always stay positive, but work in a joke when appropriate. "
-    "You have access to web search to find current information when asked."
-)
+LANGUAGE = os.getenv('LANGUAGE', 'vi')  # Default to Vietnamese
+MAX_CALL_DURATION = int(os.getenv('MAX_CALL_DURATION', 3600))  # Default 1 hour (3600 seconds)
+
+# System messages for different languages
+SYSTEM_MESSAGES = {
+    'vi': (
+        "Bạn là một trợ lý AI thân thiện và nhiệt tình, sẵn sàng trò chuyện về "
+        "bất kỳ chủ đề nào mà người dùng quan tâm và cung cấp thông tin hữu ích. "
+        "Bạn có khả năng kể chuyện cười vui vẻ khi phù hợp. "
+        "Luôn giữ thái độ tích cực và hỗ trợ người dùng một cách tốt nhất. "
+        "Bạn có thể tìm kiếm web để cung cấp thông tin mới nhất khi được yêu cầu. "
+        "QUAN TRỌNG: Luôn trả lời bằng tiếng Việt trừ khi người dùng yêu cầu ngôn ngữ khác."
+    ),
+    'en': (
+        "You are a helpful and bubbly AI assistant who loves to chat about "
+        "anything the user is interested in and is prepared to offer them facts. "
+        "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
+        "Always stay positive, but work in a joke when appropriate. "
+        "You have access to web search to find current information when asked."
+    )
+}
+
+SYSTEM_MESSAGE = SYSTEM_MESSAGES.get(LANGUAGE, SYSTEM_MESSAGES['en'])
 VOICE = 'alloy'
 LOG_EVENT_TYPES = [
     'error', 'response.content.done', 'rate_limits.updated',
@@ -75,9 +91,15 @@ TOOLS = [
 def web_search_sync(query: str, max_results: int = 3) -> str:
     """Perform a web search using Google Custom Search API."""
     if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
+        if LANGUAGE == 'vi':
+            return "Tìm kiếm web chưa được cấu hình. Vui lòng thiết lập Google API."
         return "Web search is not configured. Please set up Google API credentials."
     
     try:
+        # Enhanced console logging for web search
+        print("\n" + "="*60)
+        print(f"----------- Web search: {query} --------------")
+        print("="*60)
         logger.info(f"Performing Google search for: {query}")
         service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
         
@@ -91,16 +113,27 @@ def web_search_sync(query: str, max_results: int = 3) -> str:
         items = result.get('items', [])
         
         if not items:
+            if LANGUAGE == 'vi':
+                return "Không tìm thấy kết quả nào."
             return "No search results found."
         
         # Format results for voice response
-        formatted_results = f"I found {len(items)} results for '{query}'. "
-        for i, item in enumerate(items[:max_results], 1):
-            title = item.get('title', '')
-            snippet = item.get('snippet', '')
-            formatted_results += f"Result {i}: {title}. {snippet[:200]}... "
+        if LANGUAGE == 'vi':
+            formatted_results = f"Tôi tìm thấy {len(items)} kết quả cho '{query}'. "
+            for i, item in enumerate(items[:max_results], 1):
+                title = item.get('title', '')
+                snippet = item.get('snippet', '')
+                formatted_results += f"Kết quả {i}: {title}. {snippet[:200]}... "
+        else:
+            formatted_results = f"I found {len(items)} results for '{query}'. "
+            for i, item in enumerate(items[:max_results], 1):
+                title = item.get('title', '')
+                snippet = item.get('snippet', '')
+                formatted_results += f"Result {i}: {title}. {snippet[:200]}... "
         
         logger.info(f"Search completed with {len(items)} results")
+        print(f"Search completed. Found {len(items)} results.")
+        print("="*60 + "\n")
         return formatted_results
     except Exception as e:
         logger.error(f"Error during Google search: {str(e)}")
@@ -122,9 +155,14 @@ async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
     response = VoiceResponse()
     # <Say> punctuation to improve text-to-speech flow
-    response.say("Hello")
-    response.pause(length=1)
-    response.say("How can I help you today?")
+    if LANGUAGE == 'vi':
+        response.say("Xin chào", language="vi-VN")
+        response.pause(length=1)
+        response.say("Tôi có thể giúp gì cho bạn?", language="vi-VN")
+    else:
+        response.say("Hello")
+        response.pause(length=1)
+        response.say("How can I help you today?")
     host = request.url.hostname
     connect = Connect()
     connect.stream(url=f'wss://{host}/media-stream')
@@ -152,12 +190,66 @@ async def handle_media_stream(websocket: WebSocket):
         last_assistant_item = None
         mark_queue = []
         response_start_timestamp_twilio = None
+        call_start_time = asyncio.get_event_loop().time()
+        
+        # Log call duration settings
+        if MAX_CALL_DURATION:
+            duration_mins = MAX_CALL_DURATION / 60
+            logger.info(f"Call duration limit set to {duration_mins} minutes ({MAX_CALL_DURATION} seconds)")
+            print(f"\n📞 Call duration limit: {duration_mins} minutes")
+        else:
+            logger.info("No call duration limit set")
+            print("\n📞 No call duration limit")
+        
+        async def check_call_duration():
+            """Check if call has exceeded maximum duration and terminate if necessary."""
+            if not MAX_CALL_DURATION:
+                return False
+            
+            current_time = asyncio.get_event_loop().time()
+            elapsed_time = current_time - call_start_time
+            
+            if elapsed_time >= MAX_CALL_DURATION:
+                logger.info(f"Call duration limit reached ({MAX_CALL_DURATION} seconds)")
+                print(f"\n⏰ Call duration limit reached ({MAX_CALL_DURATION} seconds). Ending call...")
+                
+                # Send a goodbye message before disconnecting
+                if stream_sid and websocket.client_state.value == 1:  # Check if connection is open
+                    goodbye_message = {
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{
+                                "type": "input_text",
+                                "text": "Xin lỗi, cuộc gọi đã đạt giới hạn thời gian. Cảm ơn bạn đã gọi. Tạm biệt!" if LANGUAGE == 'vi' else "I'm sorry, but we've reached the call time limit. Thank you for calling. Goodbye!"
+                            }]
+                        }
+                    }
+                    if openai_ws.open:
+                        await openai_ws.send(json.dumps(goodbye_message))
+                        await openai_ws.send(json.dumps({"type": "response.create"}))
+                        await asyncio.sleep(3)  # Give time for the message to be spoken
+                
+                return True
+            
+            # Log remaining time every 5 minutes
+            if int(elapsed_time) % 300 == 0 and int(elapsed_time) > 0:
+                remaining_time = MAX_CALL_DURATION - elapsed_time
+                remaining_mins = remaining_time / 60
+                logger.info(f"Call time remaining: {remaining_mins:.1f} minutes")
+                
+            return False
         
         async def receive_from_twilio():
             """Receive audio data from Twilio and send it to the OpenAI Realtime API."""
             nonlocal stream_sid, latest_media_timestamp
             try:
                 async for message in websocket.iter_text():
+                    # Check call duration limit
+                    if await check_call_duration():
+                        break
+                    
                     data = json.loads(message)
                     if data['event'] == 'media' and openai_ws.open:
                         latest_media_timestamp = int(data['media']['timestamp'])
@@ -185,6 +277,10 @@ async def handle_media_stream(websocket: WebSocket):
             nonlocal stream_sid, last_assistant_item, response_start_timestamp_twilio
             try:
                 async for openai_message in openai_ws:
+                    # Check call duration limit
+                    if await check_call_duration():
+                        break
+                    
                     response = json.loads(openai_message)
                     if response['type'] in LOG_EVENT_TYPES:
                         print(f"Received event: {response['type']}", response)
