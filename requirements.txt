@@ -31,4 +31,3 @@ yarl==1.12.1
 google-api-python-client==2.149.0
 pytz==2024.2
 python-multipart==0.0.9
-yfinance==0.2.28

@@ -70,22 +70,32 @@ SYSTEM_MESSAGES = {
         "Bạn là một trợ lý AI thân thiện và nhiệt tình, sẵn sàng trò chuyện về "
         "bất kỳ chủ đề nào mà người dùng quan tâm và cung cấp thông tin hữu ích. "
         "Bạn có khả năng kể chuyện cười vui vẻ khi phù hợp. "
-        "Luôn giữ thái độ tích cực và hỗ trợ người dùng một cách tốt nhất. "
-        "Bạn có thể tìm kiếm web để cung cấp thông tin mới nhất khi được yêu cầu. "
-        "QUAN TRỌNG: Khi bạn nhận được kết quả từ function web_search hoặc get_current_time, "
-        "hãy LUÔN sử dụng thông tin đó để trả lời người dùng. Đọc to và rõ ràng các kết quả tìm kiếm. "
-        "Nếu kết quả không có thông tin cụ thể (như tỷ số trận đấu), hãy nói rõ những gì bạn tìm thấy "
-        "và gợi ý người dùng hỏi cách khác hoặc tìm kiếm cụ thể hơn. "
+        "Luôn giữ thái độ tích cực và hỗ trợ người dùng một cách tốt nhất.\n\n"
+        "QUY TRÌNH TRẢ LỜI:\n"
+        "1. TRƯỚC TIÊN: Sử dụng kiến thức có sẵn của bạn để trả lời nếu thông tin không cần phải mới nhất\n"
+        "2. CHỈ sử dụng các function khi:\n"
+        "   - Cần thông tin THỜI GIAN THỰC (giá cổ phiếu hiện tại, tin tức mới nhất, thời tiết)\n"
+        "   - Cần thông tin ĐỊA ĐIỂM CỤ THỂ (địa chỉ, số điện thoại, giờ mở cửa)\n"
+        "   - Cần CHỈ ĐƯỜNG hoặc tìm VIDEO trên YouTube\n"
+        "   - Người dùng YÊU CẦU RÕ RÀNG tìm kiếm web\n"
+        "3. Khi nhận được kết quả từ function, LUÔN sử dụng thông tin đó để trả lời\n"
+        "4. Nếu kết quả không đủ chi tiết, hãy nói rõ và gợi ý cách hỏi cụ thể hơn\n"
         "Luôn trả lời bằng tiếng Việt."
     ),
     'en': (
         "You are a helpful and bubbly AI assistant who loves to chat about "
         "anything the user is interested in and is prepared to offer them facts. "
         "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
-        "Always stay positive, but work in a joke when appropriate. "
-        "You have access to web search to find current information when asked. "
-        "IMPORTANT: When you receive results from web_search or get_current_time functions, "
-        "ALWAYS use that information to answer the user. Read out the search results clearly."
+        "Always stay positive, but work in a joke when appropriate.\n\n"
+        "RESPONSE STRATEGY:\n"
+        "1. FIRST: Use your built-in knowledge for general information that doesn't need to be current\n"
+        "2. ONLY use functions when:\n"
+        "   - Need REAL-TIME info (current stock prices, latest news, weather)\n"
+        "   - Need SPECIFIC LOCATION details (address, phone, hours)\n"
+        "   - Need DIRECTIONS or YouTube videos\n"
+        "   - User EXPLICITLY asks to search the web\n"
+        "3. When you receive function results, ALWAYS use that information in your response\n"
+        "4. If results lack detail, acknowledge this and suggest more specific queries"
     )
 }
 
@@ -107,12 +117,55 @@ def get_current_time_str():
     """Get current time string in configured timezone."""
     return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S %Z')
 
+def google_search_fallback(query: str) -> str:
+    """Fallback to Google search when specific APIs fail or aren't available."""
+    try:
+        if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
+            if LANGUAGE == 'vi':
+                return "Không thể thực hiện tìm kiếm. Vui lòng cấu hình Google API."
+            return "Unable to perform search. Please configure Google API."
+        
+        logger.info(f"Using Google search fallback for: {query}")
+        print(f"\n⚠️  Falling back to general Google search for: {query}")
+        
+        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
+        result = service.cse().list(
+            q=query,
+            cx=GOOGLE_CSE_ID,
+            num=3
+        ).execute()
+        
+        items = result.get('items', [])
+        
+        if not items:
+            if LANGUAGE == 'vi':
+                return f"Không tìm thấy kết quả nào cho '{query}'"
+            return f"No results found for '{query}'"
+        
+        # Format results
+        results_text = []
+        for item in items[:2]:
+            title = item.get('title', '')
+            snippet = item.get('snippet', '').replace('\xa0', ' ').replace('...', '. ')
+            results_text.append(f"{title}: {snippet[:200]}")
+        
+        if LANGUAGE == 'vi':
+            return f"Kết quả tìm kiếm: " + ". ".join(results_text)
+        else:
+            return f"Search results: " + ". ".join(results_text)
+            
+    except Exception as e:
+        logger.error(f"Fallback search also failed: {str(e)}")
+        if LANGUAGE == 'vi':
+            return f"Không thể tìm kiếm thông tin về '{query}'"
+        return f"Unable to search for information about '{query}'"
+
 def get_place_info(place_name: str, location: str = "") -> str:
     """Get information about a place using Google Places API."""
     if not GOOGLE_API_KEY:
-        if LANGUAGE == 'vi':
-            return "Google Places API chưa được cấu hình. Vui lòng thiết lập Google API key."
-        return "Google Places API is not configured. Please set up Google API key."
+        # Fallback to general search for place information
+        search_query = f"{place_name} {location}".strip() + " address phone hours reviews"
+        return google_search_fallback(search_query)
     
     try:
         # Build the Google Places service
@@ -220,19 +273,10 @@ def get_place_info(place_name: str, location: str = "") -> str:
         return result
         
     except Exception as e:
-        logger.error(f"Error getting place info: {str(e)}")
-        if "API key not valid" in str(e):
-            if LANGUAGE == 'vi':
-                return "Lỗi: Google Places API chưa được kích hoạt. Vui lòng kích hoạt Places API trong Google Cloud Console."
-            return "Error: Google Places API is not enabled. Please enable Places API in Google Cloud Console."
-        elif "PERMISSION_DENIED" in str(e):
-            if LANGUAGE == 'vi':
-                return "Lỗi: Không có quyền truy cập Places API. Vui lòng kiểm tra cấu hình API key."
-            return "Error: Permission denied for Places API. Please check API key configuration."
-        else:
-            if LANGUAGE == 'vi':
-                return f"Lỗi khi tìm kiếm thông tin: {str(e)}"
-            return f"Error searching for place information: {str(e)}"
+        logger.error(f"Error getting place info: {str(e)}, falling back to general search")
+        # Fallback to general search on any error
+        search_query = f"{place_name} {location}".strip() + " address phone hours reviews"
+        return google_search_fallback(search_query)
 
 def get_current_time(location: str) -> str:
     """Get the current time for a specific location/timezone."""
@@ -324,87 +368,84 @@ def get_current_time(location: str) -> str:
             return f"Sorry, I encountered an error while getting the time for {location}."
 
 def get_stock_info(symbol: str) -> str:
-    """Get current stock information using Yahoo Finance."""
+    """Get current stock information using Google Finance search with fallback."""
     try:
-        import yfinance as yf
+        if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
+            # Fallback to general web search
+            return google_search_fallback(f"{symbol} stock price current value")
         
         logger.info(f"Getting stock info for: {symbol}")
         print(f"\n{'='*60}")
         print(f"----------- Getting stock info: {symbol} --------------")
         print("="*60)
         
-        # Get stock data
-        stock = yf.Ticker(symbol.upper())
-        info = stock.info
+        # Search for stock information using Google Custom Search
+        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
         
-        # Get current price and basic info
-        current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
-        previous_close = info.get('previousClose', info.get('regularMarketPreviousClose', 0))
+        # Search specifically on finance sites for current stock price
+        search_query = f"{symbol.upper()} stock price quote site:finance.yahoo.com OR site:google.com/finance OR site:marketwatch.com"
         
-        if current_price == 0:
-            # Try to get latest price from history
-            hist = stock.history(period="1d")
-            if not hist.empty:
-                current_price = hist['Close'].iloc[-1]
+        result = service.cse().list(
+            q=search_query,
+            cx=GOOGLE_CSE_ID,
+            num=3
+        ).execute()
+        
+        items = result.get('items', [])
+        
+        if not items:
+            # Fallback to general search if no specific results
+            logger.info(f"No specific finance results, falling back to general search for {symbol}")
+            return google_search_fallback(f"{symbol} stock price current value")
+        
+        # Extract information from search results
+        stock_info = []
+        for item in items[:2]:  # Use first 2 results for better coverage
+            title = item.get('title', '')
+            snippet = item.get('snippet', '')
+            
+            # Try to extract price information from snippet
+            import re
+            # Look for price patterns like $XXX.XX or XXX.XX
+            price_match = re.search(r'\$?(\d+\.?\d*)', snippet)
+            if price_match:
+                price = price_match.group(1)
                 
-        if current_price == 0:
-            if LANGUAGE == 'vi':
-                return f"Không tìm thấy thông tin cho mã chứng khoán {symbol.upper()}"
-            return f"No information found for stock symbol {symbol.upper()}"
+            # Clean up snippet
+            snippet = snippet.replace('\xa0', ' ').replace('...', '. ')
+            stock_info.append(f"{title}: {snippet[:200]}")
         
-        # Calculate change
-        change = current_price - previous_close if previous_close else 0
-        change_percent = (change / previous_close * 100) if previous_close else 0
-        
-        # Get additional info
-        market_cap = info.get('marketCap', 0)
-        volume = info.get('volume', 0)
-        day_high = info.get('dayHigh', 0)
-        day_low = info.get('dayLow', 0)
-        
-        # Get timestamp of last trade
+        # Get timestamp
         from datetime import datetime
         current_time = datetime.now(pytz.timezone('America/New_York'))
         time_str = current_time.strftime('%H:%M %Z')
         
         # Format response
         if LANGUAGE == 'vi':
-            result = f"{info.get('longName', symbol.upper())}: "
-            result += f"Giá hiện tại ${current_price:.2f}, "
-            result += f"thay đổi {'+' if change >= 0 else ''}{change:.2f} ({'+' if change_percent >= 0 else ''}{change_percent:.2f}%). "
-            if day_high and day_low:
-                result += f"Trong ngày: thấp ${day_low:.2f}, cao ${day_high:.2f}. "
-            if volume:
-                result += f"Khối lượng: {volume:,}. "
-            result += f"Cập nhật lúc {time_str}"
+            result = f"Thông tin chứng khoán {symbol.upper()}: "
+            result += ". ".join(stock_info)
+            result += f" Cập nhật lúc {time_str}."
         else:
-            result = f"{info.get('longName', symbol.upper())}: "
-            result += f"Current price ${current_price:.2f}, "
-            result += f"change {'+' if change >= 0 else ''}{change:.2f} ({'+' if change_percent >= 0 else ''}{change_percent:.2f}%). "
-            if day_high and day_low:
-                result += f"Day range: ${day_low:.2f} - ${day_high:.2f}. "
-            if volume:
-                result += f"Volume: {volume:,}. "
-            result += f"Last updated {time_str}"
+            result = f"Stock information for {symbol.upper()}: "
+            result += ". ".join(stock_info)
+            result += f" Last updated {time_str}."
         
-        print(f"Stock price: ${current_price:.2f}")
+        print(f"Found stock info for {symbol.upper()}")
         print("="*60 + "\n")
         
         return result
         
     except Exception as e:
-        logger.error(f"Error getting stock info: {str(e)}")
-        if LANGUAGE == 'vi':
-            return f"Không thể lấy thông tin chứng khoán cho {symbol}. Vui lòng kiểm tra mã chứng khoán."
-        return f"Unable to get stock information for {symbol}. Please check the symbol."
+        logger.error(f"Error getting stock info: {str(e)}, falling back to general search")
+        # Fallback to general search on any error
+        return google_search_fallback(f"{symbol} stock price current value")
 
 def get_directions(origin: str, destination: str, mode: str = "driving") -> str:
     """Get directions between two locations using Google Directions API."""
     try:
         if not GOOGLE_API_KEY:
-            if LANGUAGE == 'vi':
-                return "Google Directions API chưa được cấu hình."
-            return "Google Directions API is not configured."
+            # Fallback to general search for directions
+            return google_search_fallback(f"directions from {origin} to {destination} {mode}")
         
         logger.info(f"Getting directions from {origin} to {destination}")
         print(f"\n{'='*60}")
@@ -471,18 +512,16 @@ def get_directions(origin: str, destination: str, mode: str = "driving") -> str:
         return result
         
     except Exception as e:
-        logger.error(f"Error getting directions: {str(e)}")
-        if LANGUAGE == 'vi':
-            return f"Lỗi khi tìm đường: {str(e)}"
-        return f"Error getting directions: {str(e)}"
+        logger.error(f"Error getting directions: {str(e)}, falling back to general search")
+        # Fallback to general search on error
+        return google_search_fallback(f"directions from {origin} to {destination} {mode}")
 
 def search_youtube(query: str, max_results: int = 3) -> str:
     """Search YouTube videos using YouTube Data API v3."""
     try:
         if not GOOGLE_API_KEY:
-            if LANGUAGE == 'vi':
-                return "YouTube API chưa được cấu hình."
-            return "YouTube API is not configured."
+            # Fallback to search for YouTube videos
+            return google_search_fallback(f"site:youtube.com {query}")
         
         logger.info(f"Searching YouTube for: {query}")
         print(f"\n{'='*60}")
@@ -528,18 +567,16 @@ def search_youtube(query: str, max_results: int = 3) -> str:
         return result
         
     except Exception as e:
-        logger.error(f"Error searching YouTube: {str(e)}")
-        if LANGUAGE == 'vi':
-            return f"Lỗi khi tìm kiếm YouTube: {str(e)}"
-        return f"Error searching YouTube: {str(e)}"
+        logger.error(f"Error searching YouTube: {str(e)}, falling back to general search")
+        # Fallback to search YouTube via Google
+        return google_search_fallback(f"site:youtube.com {query}")
 
 def knowledge_graph_search(query: str) -> str:
     """Search Google Knowledge Graph for entity information."""
     try:
         if not GOOGLE_API_KEY:
-            if LANGUAGE == 'vi':
-                return "Knowledge Graph API chưa được cấu hình."
-            return "Knowledge Graph API is not configured."
+            # Fallback to general search for entity information
+            return google_search_fallback(f"{query} wikipedia facts information")
         
         logger.info(f"Knowledge Graph search for: {query}")
         print(f"\n{'='*60}")
@@ -588,18 +625,16 @@ def knowledge_graph_search(query: str) -> str:
         return result
         
     except Exception as e:
-        logger.error(f"Error in Knowledge Graph search: {str(e)}")
-        if LANGUAGE == 'vi':
-            return f"Lỗi khi tìm kiếm Knowledge Graph: {str(e)}"
-        return f"Error in Knowledge Graph search: {str(e)}"
+        logger.error(f"Error in Knowledge Graph search: {str(e)}, falling back to general search")
+        # Fallback to general search
+        return google_search_fallback(f"{query} wikipedia facts information")
 
 def search_news(query: str, max_results: int = 3) -> str:
     """Search for news using Google Custom Search configured for news."""
     try:
         if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
-            if LANGUAGE == 'vi':
-                return "Google News Search chưa được cấu hình."
-            return "Google News Search is not configured."
+            # Fallback - though this shouldn't happen as fallback also needs these
+            return google_search_fallback(f"{query} latest news today")
         
         logger.info(f"Searching news for: {query}")
         print(f"\n{'='*60}")
@@ -645,10 +680,9 @@ def search_news(query: str, max_results: int = 3) -> str:
         return result_text
         
     except Exception as e:
-        logger.error(f"Error searching news: {str(e)}")
-        if LANGUAGE == 'vi':
-            return f"Lỗi khi tìm kiếm tin tức: {str(e)}"
-        return f"Error searching news: {str(e)}"
+        logger.error(f"Error searching news: {str(e)}, falling back to general search")
+        # Fallback to general news search
+        return google_search_fallback(f"{query} latest news today")
 
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
@@ -670,7 +704,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "get_place_info",
-        "description": "Get detailed information about a specific business, restaurant, store, or place including address, phone, hours, and reviews. Use this for location/business queries.",
+        "description": "ONLY use for getting CURRENT address, phone, hours of SPECIFIC businesses/places. Not for general info about places.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -690,7 +724,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "get_current_time",
-        "description": "Get the current time in any city or timezone. Use this for time-related queries instead of web search.",
+        "description": "ONLY use for getting the CURRENT time in a specific location. Not for historical times or general time questions.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -705,7 +739,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "get_stock_info",
-        "description": "Get current stock price and information for any stock symbol. Use this for stock market queries.",
+        "description": "ONLY use for REAL-TIME stock prices. For historical data or general company info, use your knowledge.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -720,7 +754,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "get_directions",
-        "description": "Get driving or transit directions between two locations.",
+        "description": "ONLY use for step-by-step navigation directions. For general distance/travel questions, use your knowledge.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -744,7 +778,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "search_youtube",
-        "description": "Search for YouTube videos on any topic.",
+        "description": "ONLY use when user wants to find specific YouTube videos. Not for general video information.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -764,7 +798,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "knowledge_graph_search",
-        "description": "Get information about entities (people, places, organizations, etc.) from Google's Knowledge Graph.",
+        "description": "ONLY use when your knowledge is insufficient and need current facts about entities. Try your knowledge first.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -779,7 +813,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "search_news",
-        "description": "Search for recent news articles about any topic.",
+        "description": "ONLY use for news from the LAST 7 DAYS. For older events, use your knowledge.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -799,7 +833,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "web_search",
-        "description": "Search the web for current information about any topic (use specialized functions for stocks, directions, YouTube, news, or business info when appropriate)",
+        "description": "LAST RESORT: Only use when: 1) User explicitly asks to search web, 2) Need very recent info not covered by other functions, 3) Your knowledge and other functions are insufficient.",
         "parameters": {
             "type": "object",
             "properties": {
