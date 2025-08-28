@@ -30,6 +30,7 @@ jobs:
         echo "GOOGLE_CSE_ID=${{ vars.GOOGLE_CSE_ID }}" >> .env
         echo "TIMEZONE=${{ vars.TIMEZONE }}" >> .env
         echo "MAX_CALL_DURATION=${{ vars.MAX_CALL_DURATION }}" >> .env
+        echo "LANGUAGE=${{ vars.LANGUAGE }}" >> .env
 
     - name: Install dependencies
       run: |
