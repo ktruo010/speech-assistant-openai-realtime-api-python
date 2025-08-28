@@ -1474,29 +1474,15 @@ async def handle_voice_passcode_stream(websocket: WebSocket):
                 "input_audio_format": "g711_ulaw",
                 "output_audio_format": "g711_ulaw",
                 "voice": VOICE,
-                "instructions": f"You are a passcode verification assistant. Listen to the user speak their passcode. The correct passcode is: {PASSCODE}. If they say the correct passcode, respond with EXACTLY: 'PASSCODE_CORRECT'. If they say an incorrect passcode, respond with EXACTLY: 'PASSCODE_INCORRECT'. Only listen for and verify numeric passcodes. Be very strict - the passcode must match exactly.",
+                "instructions": f"You are a silent passcode verification assistant. DO NOT speak unless you hear a passcode. Listen carefully for the user to speak numbers. The correct passcode is: {PASSCODE}. When you hear numbers spoken, verify them. If they match the passcode exactly, respond with only: 'PASSCODE_CORRECT'. If they don't match, respond with only: 'PASSCODE_INCORRECT'. Never say anything else. Never greet the user. Never ask questions. Just listen and verify when you hear numbers.",
                 "modalities": ["text", "audio"],
                 "temperature": 0.1
             }
         }
         await openai_ws.send(json.dumps(session_update))
         
-        # Send initial prompt
-        initial_prompt = {
-            "type": "conversation.item.create",
-            "item": {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": "Listen for the user's passcode now."
-                    }
-                ]
-            }
-        }
-        await openai_ws.send(json.dumps(initial_prompt))
-        await openai_ws.send(json.dumps({"type": "response.create"}))
+        # Don't send any initial prompt - just wait for the user to speak
+        # This prevents OpenAI from generating any audio response initially
         
         async def receive_from_twilio():
             """Receive audio from Twilio and forward to OpenAI."""
