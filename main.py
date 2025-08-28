@@ -1686,7 +1686,25 @@ async def initialize_session(openai_ws):
     print('Sending session update:', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
     
-    # Let the AI greet naturally without prompting - saves tokens
+    # Send initial greeting after passcode verification
+    greeting_prompt = {
+        "type": "conversation.item.create",
+        "item": {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "Greet me warmly and ask how you can help me today."
+                }
+            ]
+        }
+    }
+    await openai_ws.send(json.dumps(greeting_prompt))
+    
+    # Trigger the AI to generate the greeting response
+    await openai_ws.send(json.dumps({"type": "response.create"}))
+    logger.info("Sent initial greeting prompt to AI")
 
 if __name__ == "__main__":
     import uvicorn
