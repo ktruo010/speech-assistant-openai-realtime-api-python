@@ -323,6 +323,333 @@ def get_current_time(location: str) -> str:
         else:
             return f"Sorry, I encountered an error while getting the time for {location}."
 
+def get_stock_info(symbol: str) -> str:
+    """Get current stock information using Yahoo Finance."""
+    try:
+        import yfinance as yf
+        
+        logger.info(f"Getting stock info for: {symbol}")
+        print(f"\n{'='*60}")
+        print(f"----------- Getting stock info: {symbol} --------------")
+        print("="*60)
+        
+        # Get stock data
+        stock = yf.Ticker(symbol.upper())
+        info = stock.info
+        
+        # Get current price and basic info
+        current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+        previous_close = info.get('previousClose', info.get('regularMarketPreviousClose', 0))
+        
+        if current_price == 0:
+            # Try to get latest price from history
+            hist = stock.history(period="1d")
+            if not hist.empty:
+                current_price = hist['Close'].iloc[-1]
+                
+        if current_price == 0:
+            if LANGUAGE == 'vi':
+                return f"Không tìm thấy thông tin cho mã chứng khoán {symbol.upper()}"
+            return f"No information found for stock symbol {symbol.upper()}"
+        
+        # Calculate change
+        change = current_price - previous_close if previous_close else 0
+        change_percent = (change / previous_close * 100) if previous_close else 0
+        
+        # Get additional info
+        market_cap = info.get('marketCap', 0)
+        volume = info.get('volume', 0)
+        day_high = info.get('dayHigh', 0)
+        day_low = info.get('dayLow', 0)
+        
+        # Get timestamp of last trade
+        from datetime import datetime
+        current_time = datetime.now(pytz.timezone('America/New_York'))
+        time_str = current_time.strftime('%H:%M %Z')
+        
+        # Format response
+        if LANGUAGE == 'vi':
+            result = f"{info.get('longName', symbol.upper())}: "
+            result += f"Giá hiện tại ${current_price:.2f}, "
+            result += f"thay đổi {'+' if change >= 0 else ''}{change:.2f} ({'+' if change_percent >= 0 else ''}{change_percent:.2f}%). "
+            if day_high and day_low:
+                result += f"Trong ngày: thấp ${day_low:.2f}, cao ${day_high:.2f}. "
+            if volume:
+                result += f"Khối lượng: {volume:,}. "
+            result += f"Cập nhật lúc {time_str}"
+        else:
+            result = f"{info.get('longName', symbol.upper())}: "
+            result += f"Current price ${current_price:.2f}, "
+            result += f"change {'+' if change >= 0 else ''}{change:.2f} ({'+' if change_percent >= 0 else ''}{change_percent:.2f}%). "
+            if day_high and day_low:
+                result += f"Day range: ${day_low:.2f} - ${day_high:.2f}. "
+            if volume:
+                result += f"Volume: {volume:,}. "
+            result += f"Last updated {time_str}"
+        
+        print(f"Stock price: ${current_price:.2f}")
+        print("="*60 + "\n")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting stock info: {str(e)}")
+        if LANGUAGE == 'vi':
+            return f"Không thể lấy thông tin chứng khoán cho {symbol}. Vui lòng kiểm tra mã chứng khoán."
+        return f"Unable to get stock information for {symbol}. Please check the symbol."
+
+def get_directions(origin: str, destination: str, mode: str = "driving") -> str:
+    """Get directions between two locations using Google Directions API."""
+    try:
+        if not GOOGLE_API_KEY:
+            if LANGUAGE == 'vi':
+                return "Google Directions API chưa được cấu hình."
+            return "Google Directions API is not configured."
+        
+        logger.info(f"Getting directions from {origin} to {destination}")
+        print(f"\n{'='*60}")
+        print(f"----------- Directions: {origin} → {destination} --------------")
+        print("="*60)
+        
+        service = build("maps", "v1", developerKey=GOOGLE_API_KEY)
+        
+        # Make request to Directions API
+        import requests
+        url = "https://maps.googleapis.com/maps/api/directions/json"
+        params = {
+            "origin": origin,
+            "destination": destination,
+            "mode": mode,
+            "key": GOOGLE_API_KEY,
+            "language": "vi" if LANGUAGE == 'vi' else "en"
+        }
+        
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        if data.get("status") != "OK":
+            if LANGUAGE == 'vi':
+                return f"Không thể tìm đường từ {origin} đến {destination}"
+            return f"Could not find directions from {origin} to {destination}"
+        
+        # Parse the route
+        route = data["routes"][0]
+        leg = route["legs"][0]
+        
+        distance = leg["distance"]["text"]
+        duration = leg["duration"]["text"]
+        start_address = leg["start_address"]
+        end_address = leg["end_address"]
+        
+        # Get first few steps
+        steps_text = []
+        for i, step in enumerate(leg["steps"][:3]):
+            instruction = step["html_instructions"]
+            # Remove HTML tags
+            import re
+            instruction = re.sub('<.*?>', '', instruction)
+            step_distance = step["distance"]["text"]
+            steps_text.append(f"{i+1}. {instruction} ({step_distance})")
+        
+        # Format response
+        if LANGUAGE == 'vi':
+            result = f"Chỉ đường từ {start_address} đến {end_address}: "
+            result += f"Khoảng cách {distance}, thời gian ước tính {duration}. "
+            result += "Các bước: " + "; ".join(steps_text)
+            if len(leg["steps"]) > 3:
+                result += f" và {len(leg['steps'])-3} bước nữa."
+        else:
+            result = f"Directions from {start_address} to {end_address}: "
+            result += f"Distance {distance}, estimated time {duration}. "
+            result += "Steps: " + "; ".join(steps_text)
+            if len(leg["steps"]) > 3:
+                result += f" and {len(leg['steps'])-3} more steps."
+        
+        print(f"Distance: {distance}, Duration: {duration}")
+        print("="*60 + "\n")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting directions: {str(e)}")
+        if LANGUAGE == 'vi':
+            return f"Lỗi khi tìm đường: {str(e)}"
+        return f"Error getting directions: {str(e)}"
+
+def search_youtube(query: str, max_results: int = 3) -> str:
+    """Search YouTube videos using YouTube Data API v3."""
+    try:
+        if not GOOGLE_API_KEY:
+            if LANGUAGE == 'vi':
+                return "YouTube API chưa được cấu hình."
+            return "YouTube API is not configured."
+        
+        logger.info(f"Searching YouTube for: {query}")
+        print(f"\n{'='*60}")
+        print(f"----------- YouTube search: {query} --------------")
+        print("="*60)
+        
+        service = build("youtube", "v3", developerKey=GOOGLE_API_KEY)
+        
+        # Search for videos
+        search_response = service.search().list(
+            q=query,
+            part="snippet",
+            maxResults=max_results,
+            type="video",
+            relevanceLanguage="vi" if LANGUAGE == 'vi' else "en"
+        ).execute()
+        
+        if not search_response.get("items"):
+            if LANGUAGE == 'vi':
+                return f"Không tìm thấy video nào cho '{query}'"
+            return f"No videos found for '{query}'"
+        
+        # Format results
+        results = []
+        for item in search_response["items"]:
+            title = item["snippet"]["title"]
+            channel = item["snippet"]["channelTitle"]
+            video_id = item["id"]["videoId"]
+            url = f"youtube.com/watch?v={video_id}"
+            results.append(f"{title} bởi {channel} ({url})" if LANGUAGE == 'vi' else f"{title} by {channel} ({url})")
+        
+        # Format response
+        if LANGUAGE == 'vi':
+            result = f"Tìm thấy {len(results)} video cho '{query}': "
+            result += "; ".join(results)
+        else:
+            result = f"Found {len(results)} videos for '{query}': "
+            result += "; ".join(results)
+        
+        print(f"Found {len(results)} videos")
+        print("="*60 + "\n")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error searching YouTube: {str(e)}")
+        if LANGUAGE == 'vi':
+            return f"Lỗi khi tìm kiếm YouTube: {str(e)}"
+        return f"Error searching YouTube: {str(e)}"
+
+def knowledge_graph_search(query: str) -> str:
+    """Search Google Knowledge Graph for entity information."""
+    try:
+        if not GOOGLE_API_KEY:
+            if LANGUAGE == 'vi':
+                return "Knowledge Graph API chưa được cấu hình."
+            return "Knowledge Graph API is not configured."
+        
+        logger.info(f"Knowledge Graph search for: {query}")
+        print(f"\n{'='*60}")
+        print(f"----------- Knowledge Graph: {query} --------------")
+        print("="*60)
+        
+        service = build("kgsearch", "v1", developerKey=GOOGLE_API_KEY)
+        
+        # Search Knowledge Graph
+        response = service.entities().search(
+            query=query,
+            limit=1,
+            languages=["vi"] if LANGUAGE == 'vi' else ["en"]
+        ).execute()
+        
+        if not response.get("itemListElement"):
+            if LANGUAGE == 'vi':
+                return f"Không tìm thấy thông tin về '{query}'"
+            return f"No information found for '{query}'"
+        
+        # Get first result
+        entity = response["itemListElement"][0]["result"]
+        
+        name = entity.get("name", query)
+        description = entity.get("description", "")
+        detailed_desc = entity.get("detailedDescription", {})
+        article_body = detailed_desc.get("articleBody", "")
+        
+        # Format response
+        if LANGUAGE == 'vi':
+            result = f"{name}"
+            if description:
+                result += f" ({description})"
+            if article_body:
+                result += f": {article_body[:200]}..."
+        else:
+            result = f"{name}"
+            if description:
+                result += f" ({description})"
+            if article_body:
+                result += f": {article_body[:200]}..."
+        
+        print(f"Found: {name}")
+        print("="*60 + "\n")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in Knowledge Graph search: {str(e)}")
+        if LANGUAGE == 'vi':
+            return f"Lỗi khi tìm kiếm Knowledge Graph: {str(e)}"
+        return f"Error in Knowledge Graph search: {str(e)}"
+
+def search_news(query: str, max_results: int = 3) -> str:
+    """Search for news using Google Custom Search configured for news."""
+    try:
+        if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
+            if LANGUAGE == 'vi':
+                return "Google News Search chưa được cấu hình."
+            return "Google News Search is not configured."
+        
+        logger.info(f"Searching news for: {query}")
+        print(f"\n{'='*60}")
+        print(f"----------- News search: {query} --------------")
+        print("="*60)
+        
+        # Use Custom Search API with news sites
+        service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
+        
+        # Add news-specific parameters
+        search_query = f"{query} site:cnn.com OR site:bbc.com OR site:reuters.com OR site:nytimes.com OR site:vnexpress.net OR site:tuoitre.vn"
+        
+        result = service.cse().list(
+            q=search_query,
+            cx=GOOGLE_CSE_ID,
+            num=max_results,
+            dateRestrict="d7"  # Last 7 days
+        ).execute()
+        
+        if 'items' not in result:
+            if LANGUAGE == 'vi':
+                return f"Không tìm thấy tin tức nào về '{query}'"
+            return f"No news found for '{query}'"
+        
+        # Format results
+        news_items = []
+        for item in result['items']:
+            title = item.get('title', 'No title')
+            snippet = item.get('snippet', '')
+            news_items.append(f"{title}: {snippet[:100]}...")
+        
+        # Format response
+        if LANGUAGE == 'vi':
+            result_text = f"Tin tức mới nhất về '{query}': "
+            result_text += "; ".join(news_items)
+        else:
+            result_text = f"Latest news about '{query}': "
+            result_text += "; ".join(news_items)
+        
+        print(f"Found {len(news_items)} news items")
+        print("="*60 + "\n")
+        
+        return result_text
+        
+    except Exception as e:
+        logger.error(f"Error searching news: {str(e)}")
+        if LANGUAGE == 'vi':
+            return f"Lỗi khi tìm kiếm tin tức: {str(e)}"
+        return f"Error searching news: {str(e)}"
+
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
 
@@ -377,8 +704,102 @@ TOOLS = [
     },
     {
         "type": "function",
+        "name": "get_stock_info",
+        "description": "Get current stock price and information for any stock symbol. Use this for stock market queries.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "The stock symbol (e.g., 'AAPL' for Apple, 'GOOGL' for Google, 'TSLA' for Tesla)"
+                }
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "get_directions",
+        "description": "Get driving or transit directions between two locations.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "origin": {
+                    "type": "string",
+                    "description": "Starting location (address or place name)"
+                },
+                "destination": {
+                    "type": "string",
+                    "description": "Destination (address or place name)"
+                },
+                "mode": {
+                    "type": "string",
+                    "description": "Travel mode: driving, walking, bicycling, or transit",
+                    "default": "driving"
+                }
+            },
+            "required": ["origin", "destination"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "search_youtube",
+        "description": "Search for YouTube videos on any topic.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "What to search for on YouTube"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of videos to return (default: 3)",
+                    "default": 3
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "knowledge_graph_search",
+        "description": "Get information about entities (people, places, organizations, etc.) from Google's Knowledge Graph.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The entity to search for (e.g., 'Barack Obama', 'Eiffel Tower', 'Apple Inc.')"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "type": "function",
+        "name": "search_news",
+        "description": "Search for recent news articles about any topic.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The news topic to search for"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of news articles to return (default: 3)",
+                    "default": 3
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "type": "function",
         "name": "web_search",
-        "description": "Search the web for current information about any topic (except current time or business info - use specialized functions for those)",
+        "description": "Search the web for current information about any topic (use specialized functions for stocks, directions, YouTube, news, or business info when appropriate)",
         "parameters": {
             "type": "object",
             "properties": {
@@ -771,6 +1192,111 @@ async def handle_media_stream(websocket: WebSocket):
                                 # Trigger a response generation
                                 await openai_ws.send(json.dumps({"type": "response.create"}))
                                 logger.info(f"Function {name} completed and voice response triggered")
+                                
+                            elif name == 'get_stock_info':
+                                symbol = args.get('symbol', '')
+                                result = get_stock_info(symbol)
+                                
+                                # Send function output back to OpenAI
+                                function_output = {
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": call_id,
+                                        "output": result
+                                    }
+                                }
+                                await openai_ws.send(json.dumps(function_output))
+                                logger.info(f"Sent stock info to OpenAI: {result[:100]}...")
+                                
+                                # Trigger a response generation
+                                await openai_ws.send(json.dumps({"type": "response.create"}))
+                                logger.info(f"Function {name} completed and voice response triggered")
+                                
+                            elif name == 'get_directions':
+                                origin = args.get('origin', '')
+                                destination = args.get('destination', '')
+                                mode = args.get('mode', 'driving')
+                                result = get_directions(origin, destination, mode)
+                                
+                                # Send function output back to OpenAI
+                                function_output = {
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": call_id,
+                                        "output": result
+                                    }
+                                }
+                                await openai_ws.send(json.dumps(function_output))
+                                logger.info(f"Sent directions to OpenAI: {result[:100]}...")
+                                
+                                # Trigger a response generation
+                                await openai_ws.send(json.dumps({"type": "response.create"}))
+                                logger.info(f"Function {name} completed and voice response triggered")
+                                
+                            elif name == 'search_youtube':
+                                query = args.get('query', '')
+                                max_results = args.get('max_results', 3)
+                                result = search_youtube(query, max_results)
+                                
+                                # Send function output back to OpenAI
+                                function_output = {
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": call_id,
+                                        "output": result
+                                    }
+                                }
+                                await openai_ws.send(json.dumps(function_output))
+                                logger.info(f"Sent YouTube results to OpenAI: {result[:100]}...")
+                                
+                                # Trigger a response generation
+                                await openai_ws.send(json.dumps({"type": "response.create"}))
+                                logger.info(f"Function {name} completed and voice response triggered")
+                                
+                            elif name == 'knowledge_graph_search':
+                                query = args.get('query', '')
+                                result = knowledge_graph_search(query)
+                                
+                                # Send function output back to OpenAI
+                                function_output = {
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": call_id,
+                                        "output": result
+                                    }
+                                }
+                                await openai_ws.send(json.dumps(function_output))
+                                logger.info(f"Sent Knowledge Graph result to OpenAI: {result[:100]}...")
+                                
+                                # Trigger a response generation
+                                await openai_ws.send(json.dumps({"type": "response.create"}))
+                                logger.info(f"Function {name} completed and voice response triggered")
+                                
+                            elif name == 'search_news':
+                                query = args.get('query', '')
+                                max_results = args.get('max_results', 3)
+                                result = search_news(query, max_results)
+                                
+                                # Send function output back to OpenAI
+                                function_output = {
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": call_id,
+                                        "output": result
+                                    }
+                                }
+                                await openai_ws.send(json.dumps(function_output))
+                                logger.info(f"Sent news results to OpenAI: {result[:100]}...")
+                                
+                                # Trigger a response generation
+                                await openai_ws.send(json.dumps({"type": "response.create"}))
+                                logger.info(f"Function {name} completed and voice response triggered")
+                                
                             else:
                                 logger.warning(f"Unknown function called: {name}")
                         except Exception as e:
