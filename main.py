@@ -954,6 +954,11 @@ async def handle_incoming_call(request: Request):
 async def verify_passcode_speech(request: Request):
     """Verify passcode from either speech or DTMF input using Twilio."""
     form_data = await request.form()
+    
+    # Log all form data for debugging
+    logger.info(f"Form data received: {dict(form_data)}")
+    print(f"\n📋 All form data: {dict(form_data)}")
+    
     speech_result = form_data.get('SpeechResult', '')
     digits = form_data.get('Digits', '')
     confidence = float(form_data.get('Confidence', '0.0'))
@@ -966,13 +971,20 @@ async def verify_passcode_speech(request: Request):
     received_input = digits if digits else speech_result
     input_type = "DTMF" if digits else "Speech"
     
+    # Log the raw input for debugging
+    if speech_result:
+        logger.info(f"Raw speech input: '{speech_result}' (confidence: {confidence})")
+        print(f"\n🎤 Raw speech heard: '{speech_result}' (confidence: {confidence:.2f})")
+    
     logger.info(f"{input_type} passcode attempt {attempt}: {'*' * len(received_input)} (confidence: {confidence if not digits else 'N/A'})")
-    print(f"\n🎤 {input_type} input received: {'*' * len(received_input)}")
+    print(f"\n📝 {input_type} input received: {'*' * len(received_input)}")
     
     # Clean up speech result - remove spaces and convert to string
     if speech_result:
         # Remove spaces and normalize
         received_input = ''.join(speech_result.split())
+        logger.info(f"Normalized speech input: '{received_input}' (expected: {'*' * len(PASSCODE)})")
+        print(f"📊 After normalization: '{received_input}' (expected length: {len(PASSCODE)})")
     
     if received_input == PASSCODE:
         # Passcode correct
