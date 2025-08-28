@@ -10,41 +10,68 @@ from twilio.twiml.voice_response import VoiceResponse, Connect, Say, Stream
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
 import logging
+import pytz
+from datetime import datetime
 
 load_dotenv()
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Set up timezone-aware logging
+class TimezoneFormatter(logging.Formatter):
+    def __init__(self, *args, tz=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tz = tz or pytz.UTC
+    
+    def formatTime(self, record, datefmt=None):
+        dt = datetime.fromtimestamp(record.created, tz=pytz.UTC)
+        dt = dt.astimezone(self.tz)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.strftime('%Y-%m-%d %H:%M:%S %Z')
+
+# Initial logger setup (will be reconfigured after reading TIMEZONE)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 GOOGLE_CSE_ID = os.getenv('GOOGLE_CSE_ID')
 PORT = int(os.getenv('PORT', 5050))
-LANGUAGE = os.getenv('LANGUAGE', 'vi')  # Default to Vietnamese
 MAX_CALL_DURATION = int(os.getenv('MAX_CALL_DURATION', 3600))  # Default 1 hour (3600 seconds)
+PASSCODE = os.getenv('PASSCODE')  # Optional passcode for call authentication
+MAX_PASSCODE_ATTEMPTS = int(os.getenv('MAX_PASSCODE_ATTEMPTS', 3))  # Max attempts before hanging up
+TIMEZONE = os.getenv('TIMEZONE', 'Asia/Ho_Chi_Minh')  # Default to Vietnam timezone
 
-# System messages for different languages
-SYSTEM_MESSAGES = {
-    'vi': (
-        "Bạn là một trợ lý AI thân thiện và nhiệt tình, sẵn sàng trò chuyện về "
-        "bất kỳ chủ đề nào mà người dùng quan tâm và cung cấp thông tin hữu ích. "
-        "Bạn có khả năng kể chuyện cười vui vẻ khi phù hợp. "
-        "Luôn giữ thái độ tích cực và hỗ trợ người dùng một cách tốt nhất. "
-        "Bạn có thể tìm kiếm web để cung cấp thông tin mới nhất khi được yêu cầu. "
-        "QUAN TRỌNG: Luôn trả lời bằng tiếng Việt trừ khi người dùng yêu cầu ngôn ngữ khác."
-    ),
-    'en': (
-        "You are a helpful and bubbly AI assistant who loves to chat about "
-        "anything the user is interested in and is prepared to offer them facts. "
-        "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
-        "Always stay positive, but work in a joke when appropriate. "
-        "You have access to web search to find current information when asked."
-    )
-}
+# Configure timezone
+try:
+    tz = pytz.timezone(TIMEZONE)
+    print(f"⏰ Timezone configured: {TIMEZONE}")
+except pytz.exceptions.UnknownTimeZoneError:
+    print(f"⚠️ Unknown timezone: {TIMEZONE}. Using UTC instead.")
+    TIMEZONE = 'UTC'
+    tz = pytz.UTC
 
-SYSTEM_MESSAGE = SYSTEM_MESSAGES.get(LANGUAGE, SYSTEM_MESSAGES['en'])
+# Reconfigure logger with timezone
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
+    
+handler = logging.StreamHandler()
+formatter = TimezoneFormatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    tz=tz
+)
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+# System message in Vietnamese
+SYSTEM_MESSAGE = (
+    "Bạn là một trợ lý AI thân thiện và nhiệt tình, sẵn sàng trò chuyện về "
+    "bất kỳ chủ đề nào mà người dùng quan tâm và cung cấp thông tin hữu ích. "
+    "Bạn có khả năng kể chuyện cười vui vẻ khi phù hợp. "
+    "Luôn giữ thái độ tích cực và hỗ trợ người dùng một cách tốt nhất. "
+    "Bạn có thể tìm kiếm web để cung cấp thông tin mới nhất khi được yêu cầu. "
+    "QUAN TRỌNG: Luôn trả lời bằng tiếng Việt."
+)
 VOICE = 'alloy'
 LOG_EVENT_TYPES = [
     'error', 'response.content.done', 'rate_limits.updated',
@@ -57,12 +84,24 @@ SHOW_TIMING_MATH = False
 
 app = FastAPI()
 
+def get_current_time_str():
+    """Get current time string in configured timezone."""
+    return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S %Z')
+
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
 
 if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
     logger.warning('Google Search API credentials not found. Web search will be disabled.')
     logger.warning('To enable web search, set GOOGLE_API_KEY and GOOGLE_CSE_ID in the .env file.')
+
+if PASSCODE:
+    logger.info(f'Passcode protection enabled. Passcode length: {len(PASSCODE)} digits')
+    logger.info(f'Maximum passcode attempts: {MAX_PASSCODE_ATTEMPTS}')
+    print(f"\n🔒 Passcode protection enabled ({len(PASSCODE)} digits, {MAX_PASSCODE_ATTEMPTS} attempts)")
+else:
+    logger.info('No passcode protection configured')
+    print("\n🔓 No passcode protection")
 
 # Tool definitions for OpenAI
 TOOLS = [
@@ -91,9 +130,7 @@ TOOLS = [
 def web_search_sync(query: str, max_results: int = 3) -> str:
     """Perform a web search using Google Custom Search API."""
     if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
-        if LANGUAGE == 'vi':
-            return "Tìm kiếm web chưa được cấu hình. Vui lòng thiết lập Google API."
-        return "Web search is not configured. Please set up Google API credentials."
+        return "Tìm kiếm web chưa được cấu hình. Vui lòng thiết lập Google API."
     
     try:
         # Enhanced console logging for web search
@@ -113,23 +150,14 @@ def web_search_sync(query: str, max_results: int = 3) -> str:
         items = result.get('items', [])
         
         if not items:
-            if LANGUAGE == 'vi':
-                return "Không tìm thấy kết quả nào."
-            return "No search results found."
+            return "Không tìm thấy kết quả nào."
         
-        # Format results for voice response
-        if LANGUAGE == 'vi':
-            formatted_results = f"Tôi tìm thấy {len(items)} kết quả cho '{query}'. "
-            for i, item in enumerate(items[:max_results], 1):
-                title = item.get('title', '')
-                snippet = item.get('snippet', '')
-                formatted_results += f"Kết quả {i}: {title}. {snippet[:200]}... "
-        else:
-            formatted_results = f"I found {len(items)} results for '{query}'. "
-            for i, item in enumerate(items[:max_results], 1):
-                title = item.get('title', '')
-                snippet = item.get('snippet', '')
-                formatted_results += f"Result {i}: {title}. {snippet[:200]}... "
+        # Format results for voice response in Vietnamese
+        formatted_results = f"Tôi tìm thấy {len(items)} kết quả cho '{query}'. "
+        for i, item in enumerate(items[:max_results], 1):
+            title = item.get('title', '')
+            snippet = item.get('snippet', '')
+            formatted_results += f"Kết quả {i}: {title}. {snippet[:200]}... "
         
         logger.info(f"Search completed with {len(items)} results")
         print(f"Search completed. Found {len(items)} results.")
@@ -154,25 +182,94 @@ async def index_page():
 async def handle_incoming_call(request: Request):
     """Handle incoming call and return TwiML response to connect to Media Stream."""
     response = VoiceResponse()
-    # <Say> punctuation to improve text-to-speech flow
-    if LANGUAGE == 'vi':
+    host = request.url.hostname
+    
+    # If passcode is configured, ask for it
+    if PASSCODE:
+        gather = response.gather(
+            num_digits=len(PASSCODE),
+            action=f'https://{host}/verify-passcode',
+            method='POST',
+            timeout=10,
+            finish_on_key='#'
+        )
+        gather.say("Xin chào. Vui lòng nhập mật khẩu", language="vi-VN")
+        
+        # If user doesn't enter anything, repeat the prompt
+        response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi-VN")
+        response.hangup()
+    else:
+        # No passcode required, connect directly
         response.say("Xin chào", language="vi-VN")
         response.pause(length=1)
         response.say("Tôi có thể giúp gì cho bạn?", language="vi-VN")
-    else:
-        response.say("Hello")
-        response.pause(length=1)
-        response.say("How can I help you today?")
+        
+        connect = Connect()
+        connect.stream(url=f'wss://{host}/media-stream')
+        response.append(connect)
+    
+    return HTMLResponse(content=str(response), media_type="application/xml")
+
+@app.api_route("/verify-passcode", methods=["POST"])
+async def verify_passcode(request: Request):
+    """Verify the passcode entered by the caller."""
+    form_data = await request.form()
+    digits = form_data.get('Digits', '')
+    attempt = int(form_data.get('attempt', '1'))
+    
+    response = VoiceResponse()
     host = request.url.hostname
-    connect = Connect()
-    connect.stream(url=f'wss://{host}/media-stream')
-    response.append(connect)
+    
+    # Log passcode attempt
+    logger.info(f"Passcode attempt {attempt}: {'*' * len(digits)} (length: {len(digits)})")
+    
+    if digits == PASSCODE:
+        # Passcode correct - connect to AI assistant
+        logger.info("Passcode verified successfully")
+        print("\n✅ Passcode verified successfully")
+        
+        response.say("Mật khẩu đúng. Đang kết nối.", language="vi-VN")
+        response.pause(length=1)
+        response.say("Tôi có thể giúp gì cho bạn?", language="vi-VN")
+        
+        connect = Connect()
+        connect.stream(url=f'wss://{host}/media-stream')
+        response.append(connect)
+    else:
+        # Passcode incorrect
+        logger.warning(f"Incorrect passcode attempt {attempt}")
+        print(f"\n❌ Incorrect passcode attempt {attempt}/{MAX_PASSCODE_ATTEMPTS}")
+        
+        if attempt < MAX_PASSCODE_ATTEMPTS:
+            # Allow another attempt
+            gather = response.gather(
+                num_digits=len(PASSCODE),
+                action=f'https://{host}/verify-passcode?attempt={attempt + 1}',
+                method='POST',
+                timeout=10,
+                finish_on_key='#'
+            )
+            
+            remaining_attempts = MAX_PASSCODE_ATTEMPTS - attempt
+            gather.say(f"Mật khẩu không đúng. Bạn còn {remaining_attempts} lần thử. Vui lòng nhập lại mật khẩu.", language="vi-VN")
+            
+            # If user doesn't enter anything
+            response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi-VN")
+            response.hangup()
+        else:
+            # Max attempts reached - hang up
+            logger.warning("Max passcode attempts reached. Hanging up.")
+            print("\n🚫 Max passcode attempts reached. Hanging up.")
+            
+            response.say("Đã vượt quá số lần thử cho phép. Tạm biệt.", language="vi-VN")
+            response.hangup()
+    
     return HTMLResponse(content=str(response), media_type="application/xml")
 
 @app.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
     """Handle WebSocket connections between Twilio and OpenAI."""
-    print("Client connected")
+    print(f"\n📞 Client connected at {get_current_time_str()}")
     await websocket.accept()
 
     async with websockets.connect(
@@ -222,7 +319,7 @@ async def handle_media_stream(websocket: WebSocket):
                             "role": "assistant",
                             "content": [{
                                 "type": "input_text",
-                                "text": "Xin lỗi, cuộc gọi đã đạt giới hạn thời gian. Cảm ơn bạn đã gọi. Tạm biệt!" if LANGUAGE == 'vi' else "I'm sorry, but we've reached the call time limit. Thank you for calling. Goodbye!"
+                                "text": "Xin lỗi, cuộc gọi đã đạt giới hạn thời gian. Cảm ơn bạn đã gọi. Tạm biệt!"
                             }]
                         }
                     }

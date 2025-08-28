@@ -26,7 +26,10 @@ jobs:
       run: |
         echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
         echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" >> .env
-        echo "GOOGLE_CSE_ID=${{ secrets.GOOGLE_CSE_ID }}" >> .env
+        echo "PASSCODE=${{ secrets.PASSCODE }}" >> .env
+        echo "GOOGLE_CSE_ID=${{ vars.GOOGLE_CSE_ID }}" >> .env
+        echo "TIMEZONE=${{ vars.TIMEZONE }}" >> .env
+        echo "MAX_CALL_DURATION=${{ vars.MAX_CALL_DURATION }}" >> .env
 
     - name: Install dependencies
       run: |
