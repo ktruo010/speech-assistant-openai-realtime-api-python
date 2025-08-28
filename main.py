@@ -929,7 +929,7 @@ async def handle_incoming_call(request: Request):
         gather = response.gather(
             input='speech dtmf',  # Accept both speech and DTMF
             speechModel='numbers_and_commands',  # Optimized for number recognition
-            speechTimeout='3',  # Wait 3 seconds for speech
+            speechTimeout='1',  # Wait 3 seconds for speech
             timeout=10,
             action=f'https://{host}/verify-passcode-speech',
             method='POST',
