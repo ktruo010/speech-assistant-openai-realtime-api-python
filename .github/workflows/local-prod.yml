@@ -1,0 +1,47 @@
+name: Build and Deploy (Local Prod)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: [self-hosted, prod]
+    environment: prod
+    strategy:
+      matrix:
+        python-version: [3.11]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # Set up Python
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Inject env vars
+      run: |
+        echo "TWILIO_PHONE_NUMBER=${{ secrets.TWILIO_PHONE_NUMBER }}" >> .env
+        echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Verify application files
+      run: |
+        echo "Checking main.py..."
+        ls -la main.py || echo "main.py not found"
+        echo "Checking .env..."
+        ls -la .env || echo ".env not found"
+
+    - name: Start application with PM2
+      run: |
+        pm2 delete speech-assistant || true
+        pm2 start main.py --name "speech-assistant" --interpreter python3
+        pm2 save
+        pm2 status speech-assistant
