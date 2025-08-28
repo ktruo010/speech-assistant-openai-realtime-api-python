@@ -117,8 +117,48 @@ def get_current_time_str():
     """Get current time string in configured timezone."""
     return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S %Z')
 
-def google_search_fallback(query: str) -> str:
-    """Fallback to Google search when specific APIs fail or aren't available."""
+def extract_webpage_content(url: str, max_length: int = 5000) -> str:
+    """Extract and clean text content from a webpage."""
+    import requests
+    from bs4 import BeautifulSoup
+    import re
+    
+    try:
+        # Set headers to appear as a browser
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # Fetch the webpage with a timeout
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()
+        
+        # Parse HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Remove script and style elements
+        for script in soup(["script", "style", "meta", "link", "noscript"]):
+            script.decompose()
+        
+        # Get text content
+        text = soup.get_text(separator=' ', strip=True)
+        
+        # Clean up whitespace
+        text = re.sub(r'\s+', ' ', text)
+        
+        # Limit length if needed
+        if len(text) > max_length:
+            text = text[:max_length] + "..."
+        
+        return text
+        
+    except Exception as e:
+        logger.debug(f"Could not extract content from {url}: {str(e)}")
+        return ""
+
+def google_search_fallback(query: str, deep_search: bool = True) -> str:
+    """Fallback to Google search when specific APIs fail or aren't available.
+    Now provides much more comprehensive results with content extraction."""
     try:
         if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
             if LANGUAGE == 'vi':
@@ -132,7 +172,7 @@ def google_search_fallback(query: str) -> str:
         result = service.cse().list(
             q=query,
             cx=GOOGLE_CSE_ID,
-            num=3
+            num=10  # Fetch more results for comprehensive coverage
         ).execute()
         
         items = result.get('items', [])
@@ -142,17 +182,47 @@ def google_search_fallback(query: str) -> str:
                 return f"Không tìm thấy kết quả nào cho '{query}'"
             return f"No results found for '{query}'"
         
-        # Format results
+        # Format results with much more detail
         results_text = []
-        for item in items[:2]:
+        sources_used = []
+        
+        for i, item in enumerate(items[:8], 1):  # Process up to 8 results for thoroughness
             title = item.get('title', '')
             snippet = item.get('snippet', '').replace('\xa0', ' ').replace('...', '. ')
-            results_text.append(f"{title}: {snippet[:200]}")
+            link = item.get('link', '')
+            display_link = item.get('displayLink', '')
+            
+            # Build comprehensive result text
+            result_text = f"Source {i} - {title}"
+            if display_link:
+                result_text += f" (from {display_link})"
+            result_text += f": {snippet}"
+            
+            # If deep search is enabled and we're in the top 5 results, try to extract more content
+            if deep_search and i <= 5 and link:
+                extra_content = extract_webpage_content(link, max_length=2000)
+                if extra_content and len(extra_content) > len(snippet):
+                    # We got more detailed content
+                    result_text += f" Additional details: {extra_content[:1500]}"
+            
+            results_text.append(result_text)
+            sources_used.append(display_link)
+        
+        # Create comprehensive response
+        comprehensive_results = []
+        comprehensive_results.append(f"Found {len(items)} relevant sources for '{query}'.")
+        comprehensive_results.append(f"Here's a comprehensive analysis from {len(results_text)} sources:")
+        comprehensive_results.extend(results_text)
+        
+        # Add source summary
+        unique_sources = list(set(sources_used))
+        if unique_sources:
+            comprehensive_results.append(f"Information gathered from: {', '.join(unique_sources[:5])}")
         
         if LANGUAGE == 'vi':
-            return f"Kết quả tìm kiếm: " + ". ".join(results_text)
+            return "Kết quả tìm kiếm chi tiết: " + " ".join(comprehensive_results)
         else:
-            return f"Search results: " + ". ".join(results_text)
+            return " ".join(comprehensive_results)
             
     except Exception as e:
         logger.error(f"Fallback search also failed: {str(e)}")
@@ -628,60 +698,117 @@ def knowledge_graph_search(query: str) -> str:
         # Fallback to general search
         return google_search_fallback(f"{query} wikipedia facts information")
 
-def search_news(query: str, max_results: int = 3) -> str:
-    """Search for news using Google Custom Search configured for news."""
+def search_news(query: str, max_results: int = 5) -> str:
+    """Search for comprehensive news coverage using Google Custom Search with article content extraction."""
     try:
         if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
-            # Fallback - though this shouldn't happen as fallback also needs these
-            return google_search_fallback(f"{query} latest news today")
+            # Use enhanced fallback for news
+            return google_search_fallback(f"{query} latest news today breaking updates", deep_search=True)
         
-        logger.info(f"Searching news for: {query}")
+        logger.info(f"Searching comprehensive news for: {query}")
         print(f"\n{'='*60}")
-        print(f"----------- News search: {query} --------------")
+        print(f"----------- Deep News Search: {query} --------------")
         print("="*60)
         
-        # Use Custom Search API with news sites
+        # Use Custom Search API with major news sites
         service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
         
-        # Add news-specific parameters
-        search_query = f"{query} site:cnn.com OR site:bbc.com OR site:reuters.com OR site:nytimes.com OR site:vnexpress.net OR site:tuoitre.vn"
+        # Expanded news sources for better coverage
+        news_sources = "site:cnn.com OR site:bbc.com OR site:reuters.com OR site:nytimes.com OR site:washingtonpost.com OR site:theguardian.com OR site:apnews.com OR site:bloomberg.com OR site:forbes.com OR site:vnexpress.net OR site:tuoitre.vn"
+        search_query = f"{query} {news_sources}"
         
         result = service.cse().list(
             q=search_query,
             cx=GOOGLE_CSE_ID,
-            num=max_results,
+            num=10,  # Get more results for comprehensive coverage
             dateRestrict="d7"  # Last 7 days
         ).execute()
         
-        if 'items' not in result:
+        items = result.get('items', [])
+        
+        if not items:
+            # Try broader search without site restrictions
+            result = service.cse().list(
+                q=f"{query} news latest breaking",
+                cx=GOOGLE_CSE_ID,
+                num=10,
+                dateRestrict="d3"  # Last 3 days
+            ).execute()
+            items = result.get('items', [])
+        
+        if not items:
             if LANGUAGE == 'vi':
                 return f"Không tìm thấy tin tức nào về '{query}'"
             return f"No news found for '{query}'"
         
-        # Format results
-        news_items = []
-        for item in result['items']:
+        # Process news with deep content extraction
+        comprehensive_news = []
+        news_sources_used = []
+        key_facts = []
+        
+        print(f"Analyzing {len(items)} news sources for comprehensive coverage...")
+        
+        for i, item in enumerate(items[:max_results], 1):
             title = item.get('title', 'No title')
             snippet = item.get('snippet', '')
-            news_items.append(f"{title}: {snippet[:100]}...")
+            link = item.get('link', '')
+            display_link = item.get('displayLink', '')
+            
+            # Clean up snippet
+            snippet = snippet.replace('\xa0', ' ').replace('...', '. ')
+            
+            # Track sources
+            if display_link:
+                news_sources_used.append(display_link)
+            
+            # Build article summary
+            article_info = f"Article {i} - {title} [{display_link}]: {snippet}"
+            
+            # Extract full article content for top stories
+            if i <= 3 and link:
+                print(f"  Extracting full article from {display_link}...")
+                article_content = extract_webpage_content(link, max_length=4000)
+                
+                if article_content and len(article_content) > len(snippet) * 3:
+                    # Got substantial article content
+                    article_info += f" FULL ARTICLE EXCERPT: {article_content[:3000]}"
+                    
+                    # Try to extract key facts (dates, numbers, quotes)
+                    import re
+                    # Look for quoted statements
+                    quotes = re.findall(r'"([^"]{20,150})"', article_content)
+                    if quotes:
+                        key_facts.extend(quotes[:2])
+                    # Look for statistics
+                    stats = re.findall(r'\b\d{1,3}(?:,\d{3})*(?:\.\d+)?%?|\$[\d,]+(?:\.\d+)?[BMK]?\b', article_content)
+                    if stats:
+                        key_facts.extend(stats[:3])
+            
+            comprehensive_news.append(article_info)
         
-        # Format response
+        # Build comprehensive news response
         if LANGUAGE == 'vi':
-            result_text = f"Tin tức mới nhất về '{query}': "
-            result_text += "; ".join(news_items)
+            result_text = f"Phân tích tin tức toàn diện về '{query}' từ {len(items)} nguồn (7 ngày qua): "
+            result_text += " ".join(comprehensive_news)
+            if key_facts:
+                result_text += f" Các điểm chính: {'; '.join(set(key_facts[:5]))}"
+            result_text += f" Nguồn tin: {', '.join(set(news_sources_used[:5]))}"
         else:
-            result_text = f"Latest news about '{query}': "
-            result_text += "; ".join(news_items)
+            result_text = f"Comprehensive news analysis for '{query}' from {len(items)} sources (past 7 days): "
+            result_text += " ".join(comprehensive_news)
+            if key_facts:
+                result_text += f" Key facts and quotes: {'; '.join(set(key_facts[:5]))}"
+            result_text += f" News sources: {', '.join(set(news_sources_used[:5]))}"
         
-        print(f"Found {len(news_items)} news items")
+        print(f"Deep news search completed. Analyzed {len(comprehensive_news)} articles in detail")
         print("="*60 + "\n")
         
         return result_text
         
     except Exception as e:
-        logger.error(f"Error searching news: {str(e)}, falling back to general search")
-        # Fallback to general news search
-        return google_search_fallback(f"{query} latest news today")
+        logger.error(f"Error searching news: {str(e)}, falling back to enhanced general search")
+        # Enhanced fallback for news search
+        return google_search_fallback(f"{query} latest news today breaking updates", deep_search=True)
 
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
@@ -812,7 +939,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "search_news",
-        "description": "ONLY use for news from the LAST 7 DAYS. For older events, use your knowledge.",
+        "description": "Comprehensive news search with full article extraction. Provides in-depth coverage from multiple sources. Use for current events and news from the LAST 7 DAYS.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -822,8 +949,8 @@ TOOLS = [
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "Maximum number of news articles to return (default: 3)",
-                    "default": 3
+                    "description": "Maximum number of news articles to analyze in detail (default: 5, max: 10)",
+                    "default": 5
                 }
             },
             "required": ["query"]
@@ -832,7 +959,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "web_search",
-        "description": "LAST RESORT: Only use when: 1) User explicitly asks to search web, 2) Need very recent info not covered by other functions, 3) Your knowledge and other functions are insufficient.",
+        "description": "Comprehensive web search with deep content extraction from multiple sources. Provides thorough analysis of any topic. Use when: 1) User asks to search web, 2) Need current information, 3) Want detailed coverage of a topic.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -842,8 +969,8 @@ TOOLS = [
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "Maximum number of search results to return (default: 3)",
-                    "default": 3
+                    "description": "Maximum number of sources to analyze in detail (default: 5, max: 10)",
+                    "default": 5
                 }
             },
             "required": ["query"]
@@ -851,8 +978,8 @@ TOOLS = [
     }
 ]
 
-def web_search_sync(query: str, max_results: int = 3) -> str:
-    """Perform a web search using Google Custom Search API."""
+def web_search_sync(query: str, max_results: int = 5) -> str:
+    """Perform a comprehensive web search using Google Custom Search API with deep content extraction."""
     if not GOOGLE_API_KEY or not GOOGLE_CSE_ID:
         if LANGUAGE == 'vi':
             return "Tìm kiếm web chưa được cấu hình. Vui lòng thiết lập Google API."
@@ -861,16 +988,16 @@ def web_search_sync(query: str, max_results: int = 3) -> str:
     try:
         # Enhanced console logging for web search
         print("\n" + "="*60)
-        print(f"----------- Web search: {query} --------------")
+        print(f"----------- Deep Web Search: {query} --------------")
         print("="*60)
-        logger.info(f"Performing Google search for: {query}")
+        logger.info(f"Performing comprehensive Google search for: {query}")
         service = build("customsearch", "v1", developerKey=GOOGLE_API_KEY)
         
-        # Execute the search
+        # Execute the search - always get 10 results for comprehensive coverage
         result = service.cse().list(
             q=query,
             cx=GOOGLE_CSE_ID,
-            num=min(max_results, 10)  # Google API max is 10 per request
+            num=10  # Get maximum results
         ).execute()
         
         items = result.get('items', [])
@@ -880,34 +1007,65 @@ def web_search_sync(query: str, max_results: int = 3) -> str:
                 return "Không tìm thấy kết quả nào."
             return "No search results found."
         
-        # Format results for voice response
-        if LANGUAGE == 'vi':
-            formatted_results = f"Tôi tìm thấy {len(items)} kết quả cho '{query}'. "
-            for i, item in enumerate(items[:max_results], 1):
-                title = item.get('title', '')
-                snippet = item.get('snippet', '')
-                # Clean up snippet for better readability
-                snippet = snippet.replace('\xa0', ' ').replace('...', '. ')
-                formatted_results += f"Kết quả {i}: {title}. {snippet[:300]}. "
-        else:
-            formatted_results = f"I found {len(items)} results for '{query}'. "
-            for i, item in enumerate(items[:max_results], 1):
-                title = item.get('title', '')
-                snippet = item.get('snippet', '')
-                # Clean up snippet for better readability
-                snippet = snippet.replace('\xa0', ' ').replace('...', '. ')
-                formatted_results += f"Result {i}: {title}. {snippet[:300]}. "
+        # Process results with deep content extraction
+        comprehensive_results = []
+        sources_analyzed = []
         
-        logger.info(f"Search completed with {len(items)} results")
-        print(f"Search completed. Found {len(items)} results.")
+        print(f"Analyzing {len(items)} sources for comprehensive information...")
+        
+        # Process all 10 results but extract deep content from top ones
+        for i, item in enumerate(items, 1):
+            title = item.get('title', '')
+            snippet = item.get('snippet', '')
+            link = item.get('link', '')
+            display_link = item.get('displayLink', '')
+            
+            # Clean up snippet
+            snippet = snippet.replace('\xa0', ' ').replace('...', '. ')
+            
+            # Build comprehensive source information
+            if display_link:
+                sources_analyzed.append(display_link)
+            
+            # For top results, try to extract more content
+            if i <= min(max_results, 5) and link:
+                print(f"  Extracting detailed content from source {i}: {display_link}...")
+                detailed_content = extract_webpage_content(link, max_length=3000)
+                
+                if detailed_content and len(detailed_content) > len(snippet) * 2:
+                    # Got significant additional content
+                    result_text = f"Source {i} - {title} [{display_link}]: {snippet} DETAILED INFORMATION: {detailed_content[:2000]}"
+                else:
+                    # Use enhanced snippet
+                    result_text = f"Source {i} - {title} [{display_link}]: {snippet[:500]}"
+            else:
+                # For remaining results, use snippets
+                result_text = f"Source {i} - {title} [{display_link}]: {snippet[:400]}"
+            
+            comprehensive_results.append(result_text)
+        
+        # Build the comprehensive response
+        if LANGUAGE == 'vi':
+            formatted_results = f"Phân tích toàn diện về '{query}' từ {len(items)} nguồn. "
+            formatted_results += " ".join(comprehensive_results[:max_results])
+            formatted_results += f" Thông tin từ: {', '.join(set(sources_analyzed[:5]))}"
+        else:
+            formatted_results = f"Comprehensive analysis of '{query}' from {len(items)} sources. "
+            formatted_results += " ".join(comprehensive_results[:max_results])
+            formatted_results += f" Information gathered from: {', '.join(set(sources_analyzed[:5]))}"
+        
+        logger.info(f"Deep search completed with {len(items)} sources analyzed")
+        print(f"Deep search completed. Analyzed {min(max_results, len(items))} sources in detail.")
         print("="*60 + "\n")
+        
         return formatted_results
+        
     except Exception as e:
         logger.error(f"Error during Google search: {str(e)}")
         return f"Sorry, I encountered an error while searching: {str(e)}"
 
-async def web_search(query: str, max_results: int = 3) -> str:
-    """Async wrapper for web search."""
+async def web_search(query: str, max_results: int = 5) -> str:
+    """Async wrapper for comprehensive web search with deep content extraction."""
     # Run the synchronous function in a thread pool to avoid blocking
     import asyncio
     loop = asyncio.get_event_loop()
@@ -1282,7 +1440,7 @@ async def handle_media_stream(websocket: WebSocket):
                                 
                             elif name == 'web_search':
                                 query = args.get('query', '')
-                                max_results = args.get('max_results', 3)
+                                max_results = args.get('max_results', 5)
                                 result = await web_search(query, max_results)
                                 
                                 # Send function output back to OpenAI
@@ -1387,7 +1545,7 @@ async def handle_media_stream(websocket: WebSocket):
                                 
                             elif name == 'search_news':
                                 query = args.get('query', '')
-                                max_results = args.get('max_results', 3)
+                                max_results = args.get('max_results', 5)
                                 result = search_news(query, max_results)
                                 
                                 # Send function output back to OpenAI
