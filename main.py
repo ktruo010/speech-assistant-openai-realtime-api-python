@@ -1692,7 +1692,7 @@ async def initialize_session(openai_ws):
             "content": [
                 {
                     "type": "input_text",
-                    "text": "Greet me warmly and ask how you can help me today."
+                    "text": "Say hello and ask how you can help in a brief, friendly way."
                 }
             ]
         }
