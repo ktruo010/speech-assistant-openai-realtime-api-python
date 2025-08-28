@@ -83,7 +83,7 @@ SYSTEM_MESSAGES = {
     )
 }
 
-SYSTEM_MESSAGE = SYSTEM_MESSAGES.get(LANGUAGE, SYSTEM_MESSAGES['en'])
+SYSTEM_MESSAGE = SYSTEM_MESSAGES.get(LANGUAGE, SYSTEM_MESSAGES['vi'])
 VOICE = 'alloy'
 LOG_EVENT_TYPES = [
     'error', 'response.content.done', 'rate_limits.updated',
@@ -99,6 +99,95 @@ app = FastAPI()
 def get_current_time_str():
     """Get current time string in configured timezone."""
     return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+def get_current_time(location: str) -> str:
+    """Get the current time for a specific location/timezone."""
+    # Common city to timezone mappings
+    city_timezones = {
+        'new york': 'America/New_York',
+        'los angeles': 'America/Los_Angeles',
+        'chicago': 'America/Chicago',
+        'houston': 'America/Chicago',
+        'phoenix': 'America/Phoenix',
+        'philadelphia': 'America/New_York',
+        'san francisco': 'America/Los_Angeles',
+        'london': 'Europe/London',
+        'paris': 'Europe/Paris',
+        'berlin': 'Europe/Berlin',
+        'madrid': 'Europe/Madrid',
+        'rome': 'Europe/Rome',
+        'moscow': 'Europe/Moscow',
+        'tokyo': 'Asia/Tokyo',
+        'beijing': 'Asia/Shanghai',
+        'shanghai': 'Asia/Shanghai',
+        'hong kong': 'Asia/Hong_Kong',
+        'singapore': 'Asia/Singapore',
+        'delhi': 'Asia/Kolkata',
+        'mumbai': 'Asia/Kolkata',
+        'bangkok': 'Asia/Bangkok',
+        'ho chi minh': 'Asia/Ho_Chi_Minh',
+        'hanoi': 'Asia/Ho_Chi_Minh',
+        'saigon': 'Asia/Ho_Chi_Minh',
+        'sydney': 'Australia/Sydney',
+        'melbourne': 'Australia/Melbourne',
+        'dubai': 'Asia/Dubai',
+        'seoul': 'Asia/Seoul',
+        'toronto': 'America/Toronto',
+        'vancouver': 'America/Vancouver',
+        'mexico city': 'America/Mexico_City',
+        'sao paulo': 'America/Sao_Paulo',
+        'buenos aires': 'America/Argentina/Buenos_Aires',
+    }
+    
+    try:
+        # Check if it's already a timezone format
+        if '/' in location:
+            timezone_str = location
+        else:
+            # Try to find the city in our mapping
+            city_lower = location.lower().strip()
+            timezone_str = city_timezones.get(city_lower)
+            
+            if not timezone_str:
+                # Try partial match
+                for city, tz_str in city_timezones.items():
+                    if city in city_lower or city_lower in city:
+                        timezone_str = tz_str
+                        break
+            
+            if not timezone_str:
+                # Default to searching for the location as-is
+                # This might fail but we'll catch it
+                timezone_str = location
+        
+        # Get timezone object
+        target_tz = pytz.timezone(timezone_str)
+        current_time = datetime.now(target_tz)
+        
+        # Format time based on language
+        if LANGUAGE == 'vi':
+            # Vietnamese format: HH:MM:SS, ngày DD/MM/YYYY
+            time_str = current_time.strftime('%H:%M:%S, ngày %d/%m/%Y')
+            timezone_name = current_time.strftime('%Z')
+            return f"Bây giờ là {time_str} ({timezone_name}) tại {location}"
+        else:
+            # English format: HH:MM:SS, Month DD, YYYY
+            time_str = current_time.strftime('%I:%M:%S %p, %B %d, %Y')
+            timezone_name = current_time.strftime('%Z')
+            return f"The current time in {location} is {time_str} ({timezone_name})"
+            
+    except pytz.exceptions.UnknownTimeZoneError:
+        logger.warning(f"Unknown timezone for location: {location}")
+        if LANGUAGE == 'vi':
+            return f"Xin lỗi, tôi không thể tìm thấy múi giờ cho {location}. Vui lòng thử với tên thành phố lớn như New York, London, Tokyo."
+        else:
+            return f"Sorry, I couldn't find the timezone for {location}. Please try with a major city name like New York, London, Tokyo."
+    except Exception as e:
+        logger.error(f"Error getting time for {location}: {str(e)}")
+        if LANGUAGE == 'vi':
+            return f"Xin lỗi, tôi gặp lỗi khi lấy thời gian cho {location}."
+        else:
+            return f"Sorry, I encountered an error while getting the time for {location}."
 
 if not OPENAI_API_KEY:
     raise ValueError('Missing the OpenAI API key. Please set it in the .env file.')
@@ -119,8 +208,23 @@ else:
 TOOLS = [
     {
         "type": "function",
+        "name": "get_current_time",
+        "description": "Get the current time in any city or timezone. Use this for time-related queries instead of web search.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "The city name or timezone (e.g., 'New York', 'London', 'Tokyo', 'America/New_York', 'Europe/London')"
+                }
+            },
+            "required": ["location"]
+        }
+    },
+    {
+        "type": "function",
         "name": "web_search",
-        "description": "Search the web for current information about any topic",
+        "description": "Search the web for current information about any topic (except current time - use get_current_time for that)",
         "parameters": {
             "type": "object",
             "properties": {
@@ -216,28 +320,18 @@ async def handle_incoming_call(request: Request):
             timeout=10,
             finish_on_key='#'
         )
-        # Just ask for passcode directly
-        if LANGUAGE == 'vi':
-            gather.say("Vui lòng nhập mật khẩu", language="vi-VN")
-        else:
-            gather.say("Please enter the passcode")
+        # Always use English for passcode prompt
+        gather.say("Please enter your passcode")
         
         # If user doesn't enter anything, hang up
-        if LANGUAGE == 'vi':
-            response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi-VN")
-        else:
-            response.say("No passcode received. Goodbye.")
+        response.say("No passcode received. Goodbye.")
         response.hangup()
     else:
-        # No passcode required, connect directly
+        # No passcode required, connect directly with greeting based on language
         if LANGUAGE == 'vi':
-            response.say("Xin chào", language="vi-VN")
-            response.pause(length=1)
-            response.say("Tôi có thể giúp gì cho bạn?", language="vi-VN")
+            response.say("Xin chào, Tôi có thể giúp gì cho bạn?", language="vi-VN")
         else:
-            response.say("Hello")
-            response.pause(length=1)
-            response.say("How can I help you today?")
+            response.say("Hello, how can I help you today?")
         
         connect = Connect()
         connect.stream(url=f'wss://{host}/media-stream')
@@ -263,14 +357,11 @@ async def verify_passcode(request: Request):
         logger.info("Passcode verified successfully")
         print("\n✅ Passcode verified successfully")
         
+        # After successful passcode, greet in the configured language
         if LANGUAGE == 'vi':
-            response.say("Mật khẩu đúng. Đang kết nối.", language="vi-VN")
-            response.pause(length=1)
-            response.say("Tôi có thể giúp gì cho bạn?", language="vi-VN")
+            response.say("Xin chào, Tôi có thể giúp gì cho bạn?", language="vi-VN")
         else:
-            response.say("Passcode correct. Connecting.")
-            response.pause(length=1)
-            response.say("How can I help you today?")
+            response.say("Hello, how can I help you today?")
         
         connect = Connect()
         connect.stream(url=f'wss://{host}/media-stream')
@@ -291,26 +382,19 @@ async def verify_passcode(request: Request):
             )
             
             remaining_attempts = MAX_PASSCODE_ATTEMPTS - attempt
-            if LANGUAGE == 'vi':
-                gather.say(f"Mật khẩu không đúng. Bạn còn {remaining_attempts} lần thử. Vui lòng nhập lại mật khẩu.", language="vi-VN")
-            else:
-                gather.say(f"Incorrect passcode. You have {remaining_attempts} attempts remaining. Please enter the passcode again.")
+            # Always use English for passcode retry prompts
+            gather.say(f"Incorrect passcode. You have {remaining_attempts} attempts remaining. Please enter the passcode again.")
             
             # If user doesn't enter anything
-            if LANGUAGE == 'vi':
-                response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi-VN")
-            else:
-                response.say("No passcode received. Goodbye.")  
+            response.say("No passcode received. Goodbye.")  
             response.hangup()
         else:
             # Max attempts reached - hang up
             logger.warning("Max passcode attempts reached. Hanging up.")
             print("\n🚫 Max passcode attempts reached. Hanging up.")
             
-            if LANGUAGE == 'vi':
-                response.say("Đã vượt quá số lần thử cho phép. Tạm biệt.", language="vi-VN")
-            else:
-                response.say("Maximum attempts exceeded. Goodbye.")
+            # Always use English for max attempts message
+            response.say("Maximum attempts exceeded. Goodbye.")
             response.hangup()
     
     return HTMLResponse(content=str(response), media_type="application/xml")
@@ -467,7 +551,34 @@ async def handle_media_stream(websocket: WebSocket):
                             logger.info(f"Calling function {name} with arguments: {args}")
                             
                             # Execute the function based on the name
-                            if name == 'web_search':
+                            if name == 'get_current_time':
+                                location = args.get('location', '')
+                                # Log time request
+                                print("\n" + "="*60)
+                                print(f"----------- Getting time for: {location} --------------")
+                                print("="*60)
+                                
+                                result = get_current_time(location)
+                                
+                                print(f"Time result: {result}")
+                                print("="*60 + "\n")
+                                
+                                # Send function output back to OpenAI
+                                function_output = {
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": call_id,
+                                        "output": result
+                                    }
+                                }
+                                await openai_ws.send(json.dumps(function_output))
+                                
+                                # Trigger a response generation
+                                await openai_ws.send(json.dumps({"type": "response.create"}))
+                                logger.info(f"Function {name} completed and response triggered")
+                                
+                            elif name == 'web_search':
                                 query = args.get('query', '')
                                 max_results = args.get('max_results', 3)
                                 result = await web_search(query, max_results)
