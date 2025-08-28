@@ -107,6 +107,130 @@ def get_current_time_str():
     """Get current time string in configured timezone."""
     return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S %Z')
 
+def get_place_info(place_name: str, location: str = "") -> str:
+    """Get information about a place using Google Places API."""
+    if not GOOGLE_API_KEY:
+        if LANGUAGE == 'vi':
+            return "Google Places API chưa được cấu hình. Vui lòng thiết lập Google API key."
+        return "Google Places API is not configured. Please set up Google API key."
+    
+    try:
+        # Build the Google Places service
+        service = build("places", "v1", developerKey=GOOGLE_API_KEY)
+        
+        # Construct search query
+        search_query = f"{place_name} {location}".strip()
+        
+        print("\n" + "="*60)
+        print(f"----------- Searching for place: {search_query} --------------")
+        print("="*60)
+        
+        # Search for the place using Text Search
+        search_request = {
+            "textQuery": search_query,
+            "languageCode": "vi" if LANGUAGE == 'vi' else "en"
+        }
+        
+        # Execute the search
+        places_result = service.places().searchText(body=search_request).execute()
+        
+        if not places_result.get('places'):
+            if LANGUAGE == 'vi':
+                return f"Không tìm thấy thông tin về '{place_name}'."
+            return f"No information found for '{place_name}'."
+        
+        # Get the first (most relevant) result
+        place = places_result['places'][0]
+        
+        # Extract place details
+        place_id = place.get('id', '')
+        
+        # Get detailed information about the place
+        if place_id:
+            # Fields to retrieve
+            fields = [
+                "displayName",
+                "formattedAddress", 
+                "nationalPhoneNumber",
+                "internationalPhoneNumber",
+                "websiteUri",
+                "regularOpeningHours",
+                "rating",
+                "userRatingCount",
+                "priceLevel",
+                "businessStatus"
+            ]
+            
+            detail_request = service.places().get(
+                name=f"places/{place_id}",
+                fields=",".join(fields)
+            )
+            place_details = detail_request.execute()
+        else:
+            place_details = place
+        
+        # Format the response
+        name = place_details.get('displayName', {}).get('text', place_name)
+        address = place_details.get('formattedAddress', 'Không có địa chỉ' if LANGUAGE == 'vi' else 'Address not available')
+        phone = place_details.get('nationalPhoneNumber') or place_details.get('internationalPhoneNumber') or ('Không có số điện thoại' if LANGUAGE == 'vi' else 'Phone not available')
+        website = place_details.get('websiteUri', '')
+        rating = place_details.get('rating', 0)
+        review_count = place_details.get('userRatingCount', 0)
+        
+        # Get opening hours if available
+        hours_text = ""
+        if 'regularOpeningHours' in place_details:
+            opening_hours = place_details['regularOpeningHours']
+            if 'weekdayDescriptions' in opening_hours:
+                hours_list = opening_hours['weekdayDescriptions']
+                if LANGUAGE == 'vi':
+                    hours_text = "Giờ mở cửa: " + ", ".join(hours_list[:2]) + "..."
+                else:
+                    hours_text = "Hours: " + ", ".join(hours_list[:2]) + "..."
+        
+        # Format response based on language
+        if LANGUAGE == 'vi':
+            result = f"Thông tin về {name}: "
+            result += f"Địa chỉ: {address}. "
+            result += f"Điện thoại: {phone}. "
+            if website:
+                result += f"Website: {website}. "
+            if rating > 0:
+                result += f"Đánh giá: {rating}/5 sao ({review_count} lượt đánh giá). "
+            if hours_text:
+                result += hours_text
+        else:
+            result = f"Information for {name}: "
+            result += f"Address: {address}. "
+            result += f"Phone: {phone}. "
+            if website:
+                result += f"Website: {website}. "
+            if rating > 0:
+                result += f"Rating: {rating}/5 stars ({review_count} reviews). "
+            if hours_text:
+                result += hours_text
+        
+        print(f"Found place: {name}")
+        print(f"Address: {address}")
+        print("="*60 + "\n")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting place info: {str(e)}")
+        if "API key not valid" in str(e):
+            if LANGUAGE == 'vi':
+                return "Lỗi: Google Places API chưa được kích hoạt. Vui lòng kích hoạt Places API trong Google Cloud Console."
+            return "Error: Google Places API is not enabled. Please enable Places API in Google Cloud Console."
+        elif "PERMISSION_DENIED" in str(e):
+            if LANGUAGE == 'vi':
+                return "Lỗi: Không có quyền truy cập Places API. Vui lòng kiểm tra cấu hình API key."
+            return "Error: Permission denied for Places API. Please check API key configuration."
+        else:
+            if LANGUAGE == 'vi':
+                return f"Lỗi khi tìm kiếm thông tin: {str(e)}"
+            return f"Error searching for place information: {str(e)}"
+
 def get_current_time(location: str) -> str:
     """Get the current time for a specific location/timezone."""
     # Common city to timezone mappings
@@ -215,6 +339,26 @@ else:
 TOOLS = [
     {
         "type": "function",
+        "name": "get_place_info",
+        "description": "Get detailed information about a specific business, restaurant, store, or place including address, phone, hours, and reviews. Use this for location/business queries.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "place_name": {
+                    "type": "string",
+                    "description": "The name of the place or business (e.g., 'Texas Treasure Casino', 'McDonald's in Times Square', 'Eiffel Tower')"
+                },
+                "location": {
+                    "type": "string",
+                    "description": "Optional: City or area to search in (e.g., 'Austin, Texas', 'New York', 'Paris')",
+                    "default": ""
+                }
+            },
+            "required": ["place_name"]
+        }
+    },
+    {
+        "type": "function",
         "name": "get_current_time",
         "description": "Get the current time in any city or timezone. Use this for time-related queries instead of web search.",
         "parameters": {
@@ -231,7 +375,7 @@ TOOLS = [
     {
         "type": "function",
         "name": "web_search",
-        "description": "Search the web for current information about any topic (except current time - use get_current_time for that)",
+        "description": "Search the web for current information about any topic (except current time or business info - use specialized functions for those)",
         "parameters": {
             "type": "object",
             "properties": {
@@ -553,7 +697,29 @@ async def handle_media_stream(websocket: WebSocket):
                             logger.info(f"Calling function {name} with arguments: {args}")
                             
                             # Execute the function based on the name
-                            if name == 'get_current_time':
+                            if name == 'get_place_info':
+                                place_name = args.get('place_name', '')
+                                location = args.get('location', '')
+                                
+                                result = get_place_info(place_name, location)
+                                
+                                # Send function output back to OpenAI
+                                function_output = {
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": call_id,
+                                        "output": result
+                                    }
+                                }
+                                await openai_ws.send(json.dumps(function_output))
+                                logger.info(f"Sent place info to OpenAI: {result[:100]}...")
+                                
+                                # Trigger a response generation
+                                await openai_ws.send(json.dumps({"type": "response.create"}))
+                                logger.info(f"Function {name} completed and voice response triggered")
+                                
+                            elif name == 'get_current_time':
                                 location = args.get('location', '')
                                 # Log time request
                                 print("\n" + "="*60)
