@@ -74,6 +74,8 @@ SYSTEM_MESSAGES = {
         "Bạn có thể tìm kiếm web để cung cấp thông tin mới nhất khi được yêu cầu. "
         "QUAN TRỌNG: Khi bạn nhận được kết quả từ function web_search hoặc get_current_time, "
         "hãy LUÔN sử dụng thông tin đó để trả lời người dùng. Đọc to và rõ ràng các kết quả tìm kiếm. "
+        "Nếu kết quả không có thông tin cụ thể (như tỷ số trận đấu), hãy nói rõ những gì bạn tìm thấy "
+        "và gợi ý người dùng hỏi cách khác hoặc tìm kiếm cụ thể hơn. "
         "Luôn trả lời bằng tiếng Việt."
     ),
     'en': (
@@ -283,13 +285,17 @@ def web_search_sync(query: str, max_results: int = 3) -> str:
             for i, item in enumerate(items[:max_results], 1):
                 title = item.get('title', '')
                 snippet = item.get('snippet', '')
-                formatted_results += f"Kết quả {i}: {title}. {snippet[:200]}... "
+                # Clean up snippet for better readability
+                snippet = snippet.replace('\xa0', ' ').replace('...', '. ')
+                formatted_results += f"Kết quả {i}: {title}. {snippet[:300]}. "
         else:
             formatted_results = f"I found {len(items)} results for '{query}'. "
             for i, item in enumerate(items[:max_results], 1):
                 title = item.get('title', '')
                 snippet = item.get('snippet', '')
-                formatted_results += f"Result {i}: {title}. {snippet[:200]}... "
+                # Clean up snippet for better readability
+                snippet = snippet.replace('\xa0', ' ').replace('...', '. ')
+                formatted_results += f"Result {i}: {title}. {snippet[:300]}. "
         
         logger.info(f"Search completed with {len(items)} results")
         print(f"Search completed. Found {len(items)} results.")
