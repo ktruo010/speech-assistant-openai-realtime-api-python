@@ -923,15 +923,24 @@ async def handle_incoming_call(request: Request):
     response = VoiceResponse()
     host = request.url.hostname
     
-    # If passcode is configured, default to voice with option for keypad
+    # If passcode is configured, use Twilio's speech recognition
     if PASSCODE:
-        # Immediately connect to voice passcode verification, but allow * to switch to keypad
-        response.say("Please speak your passcode clearly after the beep. Press star to use the keypad instead.")
-        connect = Connect()
-        connect.stream(url=f'wss://{host}/voice-passcode-stream?attempt=1&allow_switch=true')
-        response.append(connect)
-        # After WebSocket ends, check the result
-        response.redirect(f'https://{host}/voice-passcode-callback?attempt=1')
+        # Use Twilio's Gather with speech input
+        gather = response.gather(
+            input='speech dtmf',  # Accept both speech and DTMF
+            speechModel='numbers_and_commands',  # Optimized for number recognition
+            speechTimeout='3',  # Wait 3 seconds for speech
+            timeout=10,
+            action=f'https://{host}/verify-passcode-speech',
+            method='POST',
+            num_digits=len(PASSCODE),  # For DTMF fallback
+            finish_on_key='#'
+        )
+        gather.say("Please speak or enter your passcode.")
+        
+        # If no input received
+        response.say("No passcode received. Goodbye.")
+        response.hangup()
     else:
         # No passcode required, connect directly
         # Skip Twilio greeting and let OpenAI handle the greeting
@@ -941,60 +950,68 @@ async def handle_incoming_call(request: Request):
     
     return HTMLResponse(content=str(response), media_type="application/xml")
 
-@app.api_route("/voice-passcode-callback", methods=["POST"])
-async def voice_passcode_callback(request: Request):
-    """Handle the callback after voice passcode verification."""
-    attempt = int(request.query_params.get('attempt', 1))
+@app.api_route("/verify-passcode-speech", methods=["POST"])
+async def verify_passcode_speech(request: Request):
+    """Verify passcode from either speech or DTMF input using Twilio."""
     form_data = await request.form()
-    call_sid = form_data.get('CallSid', '')
+    speech_result = form_data.get('SpeechResult', '')
+    digits = form_data.get('Digits', '')
+    confidence = float(form_data.get('Confidence', '0.0'))
+    attempt = int(request.query_params.get('attempt', 1))
     
     response = VoiceResponse()
     host = request.url.hostname
     
-    # Check the result
-    result = voice_passcode_results.get(call_sid, False)
+    # Check what was received - speech or DTMF
+    received_input = digits if digits else speech_result
+    input_type = "DTMF" if digits else "Speech"
     
-    # Clean up the result
-    if call_sid in voice_passcode_results:
-        del voice_passcode_results[call_sid]
+    logger.info(f"{input_type} passcode attempt {attempt}: {'*' * len(received_input)} (confidence: {confidence if not digits else 'N/A'})")
+    print(f"\n🎤 {input_type} input received: {'*' * len(received_input)}")
     
-    if result == 'SWITCH_TO_DTMF':
-        # User pressed * to switch to keypad entry
-        logger.info("Switching to DTMF passcode entry")
-        gather = response.gather(
-            num_digits=len(PASSCODE),
-            action=f'https://{host}/verify-passcode?attempt={attempt}',
-            method='POST',
-            timeout=10,
-            finish_on_key='#'
-        )
-        gather.say("Please enter your passcode using the keypad.")
-        response.say("No passcode received. Goodbye.")
-        response.hangup()
-    elif result == True:
-        # Passcode was correct - connect to main assistant
-        logger.info("Voice passcode verified - connecting to main assistant")
-        print("\n🔗 Connecting to main assistant after voice verification...")
+    # Clean up speech result - remove spaces and convert to string
+    if speech_result:
+        # Remove spaces and normalize
+        received_input = ''.join(speech_result.split())
+    
+    if received_input == PASSCODE:
+        # Passcode correct
+        logger.info(f"{input_type} passcode verified successfully")
+        print(f"\n✅ {input_type} passcode verified successfully")
         
+        # Connect to main assistant
         connect = Connect()
         connect.stream(url=f'wss://{host}/media-stream')
         response.append(connect)
     else:
-        # Passcode was incorrect or not found
+        # Passcode incorrect
+        logger.warning(f"Incorrect {input_type} passcode attempt {attempt}")
+        print(f"\n❌ Incorrect {input_type} passcode attempt {attempt}/{MAX_PASSCODE_ATTEMPTS}")
+        
         if attempt < MAX_PASSCODE_ATTEMPTS:
-            # Give another chance - default to voice again
+            # Give another chance
             remaining_attempts = MAX_PASSCODE_ATTEMPTS - attempt
-            response.say(f"Incorrect passcode. You have {remaining_attempts} attempts remaining. Please speak your passcode clearly after the beep. Press star to use the keypad instead.")
+            response.say(f"Incorrect passcode. You have {remaining_attempts} attempts remaining.")
             
-            connect = Connect()
-            connect.stream(url=f'wss://{host}/voice-passcode-stream?attempt={attempt + 1}&allow_switch=true')
-            response.append(connect)
-            # After WebSocket ends, check the result
-            response.redirect(f'https://{host}/voice-passcode-callback?attempt={attempt + 1}')
+            # Try again with both speech and DTMF
+            gather = response.gather(
+                input='speech dtmf',
+                speechModel='numbers_and_commands',
+                speechTimeout='3',
+                timeout=10,
+                action=f'https://{host}/verify-passcode-speech?attempt={attempt + 1}',
+                method='POST',
+                num_digits=len(PASSCODE),
+                finish_on_key='#'
+            )
+            gather.say("Please speak or enter your passcode.")
+            
+            response.say("No passcode received. Goodbye.")
+            response.hangup()
         else:
             # Max attempts reached
-            logger.warning("Max voice passcode attempts reached. Hanging up.")
-            print("\n🚫 Max voice passcode attempts reached. Hanging up.")
+            logger.warning("Max passcode attempts reached. Hanging up.")
+            print("\n🚫 Max passcode attempts reached. Hanging up.")
             response.say("Maximum attempts reached. Goodbye.")
             response.hangup()
     
@@ -1442,220 +1459,6 @@ async def handle_media_stream(websocket: WebSocket):
                 mark_queue.append('responsePart')
 
         await asyncio.gather(receive_from_twilio(), send_to_twilio())
-
-# Store voice passcode verification results temporarily (in production, use Redis or similar)
-voice_passcode_results = {}
-
-@app.websocket("/voice-passcode-stream")
-async def handle_voice_passcode_stream(websocket: WebSocket):
-    """Handle voice passcode verification using OpenAI."""
-    attempt = int(websocket.query_params.get('attempt', 1))
-    allow_switch = websocket.query_params.get('allow_switch', 'false').lower() == 'true'
-    print(f"\n🎤 Voice passcode verification attempt {attempt} at {get_current_time_str()}")
-    await websocket.accept()
-    
-    passcode_verified = False
-    stream_sid = None
-    call_sid = None
-    switch_to_dtmf = False
-    
-    async with websockets.connect(
-        'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
-        extra_headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "OpenAI-Beta": "realtime=v1"
-        }
-    ) as openai_ws:
-        # Initialize session for passcode verification
-        session_update = {
-            "type": "session.update",
-            "session": {
-                "turn_detection": {"type": "server_vad"},
-                "input_audio_format": "g711_ulaw",
-                "output_audio_format": "g711_ulaw",
-                "voice": VOICE,
-                "instructions": f"You are a silent passcode verification assistant. DO NOT speak unless you hear a passcode. Listen carefully for the user to speak numbers. The correct passcode is: {PASSCODE}. When you hear numbers spoken, verify them. If they match the passcode exactly, respond with only: 'PASSCODE_CORRECT'. If they don't match, respond with only: 'PASSCODE_INCORRECT'. Never say anything else. Never greet the user. Never ask questions. Just listen and verify when you hear numbers.",
-                "modalities": ["text", "audio"],
-                "temperature": 0.1
-            }
-        }
-        await openai_ws.send(json.dumps(session_update))
-        
-        # Send a prompt to listen for the passcode
-        initial_prompt = {
-            "type": "conversation.item.create",
-            "item": {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": f"Listen for someone to say the numbers: {PASSCODE}. When you hear any numbers spoken, check if they match exactly."
-                    }
-                ]
-            }
-        }
-        await openai_ws.send(json.dumps(initial_prompt))
-        
-        # Track silence to trigger response
-        audio_received = False
-        silence_duration = 0
-        last_audio_time = asyncio.get_event_loop().time()
-        
-        async def check_silence():
-            """Check for silence and trigger response generation."""
-            nonlocal audio_received, silence_duration, last_audio_time
-            while True:
-                await asyncio.sleep(0.5)
-                current_time = asyncio.get_event_loop().time()
-                if audio_received and (current_time - last_audio_time) > 1.5:
-                    # User stopped speaking for 1.5 seconds, trigger response
-                    if openai_ws.open:
-                        await openai_ws.send(json.dumps({
-                            "type": "input_audio_buffer.commit"
-                        }))
-                        await openai_ws.send(json.dumps({
-                            "type": "response.create"
-                        }))
-                        audio_received = False
-                        break
-        
-        async def receive_from_twilio():
-            """Receive audio from Twilio and forward to OpenAI."""
-            nonlocal stream_sid, call_sid, switch_to_dtmf, audio_received, last_audio_time
-            try:
-                # Start silence checker
-                silence_task = asyncio.create_task(check_silence())
-                
-                async for message in websocket.iter_text():
-                    data = json.loads(message)
-                    if data['event'] == 'media' and openai_ws.open:
-                        audio_append = {
-                            "type": "input_audio_buffer.append",
-                            "audio": data['media']['payload']
-                        }
-                        await openai_ws.send(json.dumps(audio_append))
-                        audio_received = True
-                        last_audio_time = asyncio.get_event_loop().time()
-                    elif data['event'] == 'start':
-                        stream_sid = data['start']['streamSid']
-                        call_sid = data['start'].get('callSid', stream_sid)
-                        print(f"📞 Voice passcode stream started: {stream_sid}")
-                    elif data['event'] == 'dtmf' and allow_switch:
-                        # Check if user pressed * to switch to keypad
-                        digit = data['dtmf'].get('digit', '')
-                        if digit == '*':
-                            logger.info("User pressed * to switch to keypad entry")
-                            print("\n⌨️  User switching to keypad entry")
-                            switch_to_dtmf = True
-                            if call_sid:
-                                voice_passcode_results[call_sid] = 'SWITCH_TO_DTMF'
-                            silence_task.cancel()
-                            await websocket.close()
-                            return
-            except WebSocketDisconnect:
-                print("Voice passcode client disconnected.")
-                silence_task.cancel()
-                if openai_ws.open:
-                    await openai_ws.close()
-            except Exception as e:
-                logger.error(f"Error in receive_from_twilio: {e}")
-                silence_task.cancel()
-        
-        async def process_openai_response():
-            """Process OpenAI responses for passcode verification."""
-            nonlocal passcode_verified, stream_sid, call_sid
-            try:
-                async for openai_message in openai_ws:
-                    response = json.loads(openai_message)
-                    
-                    # Forward audio to Twilio
-                    if response['type'] == 'response.audio.delta' and response.get('delta'):
-                        audio_delta = {
-                            "event": "media",
-                            "streamSid": stream_sid,
-                            "media": {
-                                "payload": response['delta']
-                            }
-                        }
-                        await websocket.send_json(audio_delta)
-                    
-                    # Check for passcode verification result
-                    elif response['type'] == 'response.done':
-                        if 'response' in response and response['response']:
-                            for output in response['response'].get('output', []):
-                                if output.get('type') == 'message':
-                                    content = output.get('content', [])
-                                    for item in content:
-                                        if item.get('type') == 'text':
-                                            text = item.get('text', '').strip()
-                                            if 'PASSCODE_CORRECT' in text:
-                                                passcode_verified = True
-                                                logger.info("Voice passcode verified successfully")
-                                                print("\n✅ Voice passcode verified successfully")
-                                                # Store the result
-                                                if call_sid:
-                                                    voice_passcode_results[call_sid] = True
-                                                # Send success audio then redirect
-                                                success_message = {
-                                                    "type": "conversation.item.create",
-                                                    "item": {
-                                                        "type": "message",
-                                                        "role": "user",
-                                                        "content": [{"type": "input_text", "text": "Say: Passcode verified. Connecting you now."}]
-                                                    }
-                                                }
-                                                await openai_ws.send(json.dumps(success_message))
-                                                await openai_ws.send(json.dumps({"type": "response.create"}))
-                                                await asyncio.sleep(2)
-                                                # Close connection and redirect to main assistant
-                                                await websocket.close()
-                                                return
-                                            elif 'PASSCODE_INCORRECT' in text:
-                                                logger.warning(f"Incorrect voice passcode attempt {attempt}")
-                                                print(f"\n❌ Incorrect voice passcode attempt {attempt}/{MAX_PASSCODE_ATTEMPTS}")
-                                                # Store the failed result
-                                                if call_sid:
-                                                    voice_passcode_results[call_sid] = False
-                                                if attempt < MAX_PASSCODE_ATTEMPTS:
-                                                    # Send retry message
-                                                    retry_message = {
-                                                        "type": "conversation.item.create",
-                                                        "item": {
-                                                            "type": "message",
-                                                            "role": "user",
-                                                            "content": [{"type": "input_text", "text": f"Say: Incorrect passcode. You have {MAX_PASSCODE_ATTEMPTS - attempt} attempts remaining. Returning to main menu."}]
-                                                        }
-                                                    }
-                                                    await openai_ws.send(json.dumps(retry_message))
-                                                    await openai_ws.send(json.dumps({"type": "response.create"}))
-                                                    await asyncio.sleep(3)
-                                                else:
-                                                    # Max attempts - send goodbye
-                                                    goodbye_message = {
-                                                        "type": "conversation.item.create",
-                                                        "item": {
-                                                            "type": "message",
-                                                            "role": "user",
-                                                            "content": [{"type": "input_text", "text": "Say: Maximum attempts reached. Goodbye."}]
-                                                        }
-                                                    }
-                                                    await openai_ws.send(json.dumps(goodbye_message))
-                                                    await openai_ws.send(json.dumps({"type": "response.create"}))
-                                                    await asyncio.sleep(2)
-                                                await websocket.close()
-                                                return
-            except Exception as e:
-                logger.error(f"Error in voice passcode verification: {e}")
-                await websocket.close()
-        
-        await asyncio.gather(receive_from_twilio(), process_openai_response())
-    
-    # After websocket closes, handle the result
-    if passcode_verified:
-        # Need to redirect the call to the main assistant
-        # This is handled by Twilio after the WebSocket connection ends
-        pass
 
 async def send_initial_conversation_item(openai_ws):
     """Send initial conversation item if AI talks first."""
