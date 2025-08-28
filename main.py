@@ -1694,7 +1694,7 @@ async def initialize_session(openai_ws):
             "content": [
                 {
                     "type": "input_text",
-                    "text": "Say hello and ask how you can help in a brief, friendly way."
+                    "text": "Just say 'Hello! How can I help you?'"
                 }
             ]
         }
