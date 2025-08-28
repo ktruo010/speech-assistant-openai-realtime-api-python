@@ -53,3 +53,4 @@ jobs:
         pm2 status speech-assistant
         pm2 logs speech-assistant --lines 10 --nostream
         
+        
