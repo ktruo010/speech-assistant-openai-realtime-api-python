@@ -67,35 +67,14 @@ logger.addHandler(handler)
 # System messages for different languages
 SYSTEM_MESSAGES = {
     'vi': (
-        "Bạn là một trợ lý AI thân thiện và nhiệt tình, sẵn sàng trò chuyện về "
-        "bất kỳ chủ đề nào mà người dùng quan tâm và cung cấp thông tin hữu ích. "
-        "Bạn có khả năng kể chuyện cười vui vẻ khi phù hợp. "
-        "Luôn giữ thái độ tích cực và hỗ trợ người dùng một cách tốt nhất.\n\n"
-        "QUY TRÌNH TRẢ LỜI:\n"
-        "1. TRƯỚC TIÊN: Sử dụng kiến thức có sẵn của bạn để trả lời nếu thông tin không cần phải mới nhất\n"
-        "2. CHỈ sử dụng các function khi:\n"
-        "   - Cần thông tin THỜI GIAN THỰC (giá cổ phiếu hiện tại, tin tức mới nhất, thời tiết)\n"
-        "   - Cần thông tin ĐỊA ĐIỂM CỤ THỂ (địa chỉ, số điện thoại, giờ mở cửa)\n"
-        "   - Cần CHỈ ĐƯỜNG hoặc tìm VIDEO trên YouTube\n"
-        "   - Người dùng YÊU CẦU RÕ RÀNG tìm kiếm web\n"
-        "3. Khi nhận được kết quả từ function, LUÔN sử dụng thông tin đó để trả lời\n"
-        "4. Nếu kết quả không đủ chi tiết, hãy nói rõ và gợi ý cách hỏi cụ thể hơn\n"
-        "Luôn trả lời bằng tiếng Việt."
+        "Trợ lý AI thân thiện. Quy tắc: 1) Dùng kiến thức sẵn có trước 2) Chỉ dùng function cho: "
+        "real-time (giá cổ phiếu, tin mới), địa điểm (địa chỉ, giờ), chỉ đường, YouTube, web search theo yêu cầu "
+        "3) Luôn dùng kết quả function 4) Trả lời tiếng Việt"
     ),
     'en': (
-        "You are a helpful and bubbly AI assistant who loves to chat about "
-        "anything the user is interested in and is prepared to offer them facts. "
-        "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
-        "Always stay positive, but work in a joke when appropriate.\n\n"
-        "RESPONSE STRATEGY:\n"
-        "1. FIRST: Use your built-in knowledge for general information that doesn't need to be current\n"
-        "2. ONLY use functions when:\n"
-        "   - Need REAL-TIME info (current stock prices, latest news, weather)\n"
-        "   - Need SPECIFIC LOCATION details (address, phone, hours)\n"
-        "   - Need DIRECTIONS or YouTube videos\n"
-        "   - User EXPLICITLY asks to search the web\n"
-        "3. When you receive function results, ALWAYS use that information in your response\n"
-        "4. If results lack detail, acknowledge this and suggest more specific queries"
+        "Friendly AI assistant. Rules: 1) Use knowledge first 2) Functions only for: "
+        "real-time (stocks, news), locations (address, hours), directions, YouTube, explicit web search "
+        "3) Always use function results 4) Be helpful & concise"
     )
 }
 
@@ -830,73 +809,46 @@ TOOLS = [
     {
         "type": "function",
         "name": "get_place_info",
-        "description": "ONLY use for getting CURRENT address, phone, hours of SPECIFIC businesses/places. Not for general info about places.",
+        "description": "Get address/phone/hours for businesses",
         "parameters": {
             "type": "object",
             "properties": {
-                "place_name": {
-                    "type": "string",
-                    "description": "The name of the place or business (e.g., 'Texas Treasure Casino', 'McDonald's in Times Square', 'Eiffel Tower')"
-                },
-                "location": {
-                    "type": "string",
-                    "description": "Optional: City or area to search in (e.g., 'Austin, Texas', 'New York', 'Paris')",
-                    "default": ""
-                }
+                "place_name": {"type": "string"},
+                "location": {"type": "string", "default": ""}
             },
             "required": ["place_name"]
         }
     },
     {
-        "type": "function",
+        "type": "function", 
         "name": "get_current_time",
-        "description": "ONLY use for getting the CURRENT time in a specific location. Not for historical times or general time questions.",
+        "description": "Current time for location",
         "parameters": {
             "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "The city name or timezone (e.g., 'New York', 'London', 'Tokyo', 'America/New_York', 'Europe/London')"
-                }
-            },
+            "properties": {"location": {"type": "string"}},
             "required": ["location"]
         }
     },
     {
         "type": "function",
         "name": "get_stock_info",
-        "description": "ONLY use for REAL-TIME stock prices. For historical data or general company info, use your knowledge.",
+        "description": "Current stock price",
         "parameters": {
             "type": "object",
-            "properties": {
-                "symbol": {
-                    "type": "string",
-                    "description": "The stock symbol (e.g., 'AAPL' for Apple, 'GOOGL' for Google, 'TSLA' for Tesla)"
-                }
-            },
+            "properties": {"symbol": {"type": "string"}},
             "required": ["symbol"]
         }
     },
     {
         "type": "function",
         "name": "get_directions",
-        "description": "ONLY use for step-by-step navigation directions. For general distance/travel questions, use your knowledge.",
+        "description": "Navigation directions",
         "parameters": {
             "type": "object",
             "properties": {
-                "origin": {
-                    "type": "string",
-                    "description": "Starting location (address or place name)"
-                },
-                "destination": {
-                    "type": "string",
-                    "description": "Destination (address or place name)"
-                },
-                "mode": {
-                    "type": "string",
-                    "description": "Travel mode: driving, walking, bicycling, or transit",
-                    "default": "driving"
-                }
+                "origin": {"type": "string"},
+                "destination": {"type": "string"},
+                "mode": {"type": "string", "default": "driving"}
             },
             "required": ["origin", "destination"]
         }
@@ -904,19 +856,12 @@ TOOLS = [
     {
         "type": "function",
         "name": "search_youtube",
-        "description": "ONLY use when user wants to find specific YouTube videos. Not for general video information.",
+        "description": "Search YouTube",
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "What to search for on YouTube"
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of videos to return (default: 3)",
-                    "default": 3
-                }
+                "query": {"type": "string"},
+                "max_results": {"type": "integer", "default": 3}
             },
             "required": ["query"]
         }
@@ -924,34 +869,22 @@ TOOLS = [
     {
         "type": "function",
         "name": "knowledge_graph_search",
-        "description": "ONLY use when your knowledge is insufficient and need current facts about entities. Try your knowledge first.",
+        "description": "Entity facts",
         "parameters": {
             "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The entity to search for (e.g., 'Barack Obama', 'Eiffel Tower', 'Apple Inc.')"
-                }
-            },
+            "properties": {"query": {"type": "string"}},
             "required": ["query"]
         }
     },
     {
         "type": "function",
         "name": "search_news",
-        "description": "Comprehensive news search with full article extraction. Provides in-depth coverage from multiple sources. Use for current events and news from the LAST 7 DAYS.",
+        "description": "Recent news (7 days)",
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The news topic to search for"
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of news articles to analyze in detail (default: 5, max: 10)",
-                    "default": 5
-                }
+                "query": {"type": "string"},
+                "max_results": {"type": "integer", "default": 3}
             },
             "required": ["query"]
         }
@@ -959,19 +892,12 @@ TOOLS = [
     {
         "type": "function",
         "name": "web_search",
-        "description": "Comprehensive web search with deep content extraction from multiple sources. Provides thorough analysis of any topic. Use when: 1) User asks to search web, 2) Need current information, 3) Want detailed coverage of a topic.",
+        "description": "Web search",
         "parameters": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query to look up on the web"
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of sources to analyze in detail (default: 5, max: 10)",
-                    "default": 5
-                }
+                "query": {"type": "string"},
+                "max_results": {"type": "integer", "default": 3}
             },
             "required": ["query"]
         }
@@ -1440,7 +1366,7 @@ async def handle_media_stream(websocket: WebSocket):
                                 
                             elif name == 'web_search':
                                 query = args.get('query', '')
-                                max_results = args.get('max_results', 5)
+                                max_results = args.get('max_results', 3)
                                 result = await web_search(query, max_results)
                                 
                                 # Send function output back to OpenAI
@@ -1545,7 +1471,7 @@ async def handle_media_stream(websocket: WebSocket):
                                 
                             elif name == 'search_news':
                                 query = args.get('query', '')
-                                max_results = args.get('max_results', 5)
+                                max_results = args.get('max_results', 3)
                                 result = search_news(query, max_results)
                                 
                                 # Send function output back to OpenAI
@@ -1631,31 +1557,6 @@ async def handle_media_stream(websocket: WebSocket):
 
         await asyncio.gather(receive_from_twilio(), send_to_twilio())
 
-async def send_initial_conversation_item(openai_ws):
-    """Send initial conversation item if AI talks first."""
-    # Use appropriate greeting based on language
-    if LANGUAGE == 'vi':
-        greeting_text = "Chào bạn và nói: Xin chào, tôi có thể giúp gì cho bạn hôm nay?"
-    else:
-        greeting_text = "Greet the user and say: Hello, how can I help you today?"
-    
-    initial_conversation_item = {
-        "type": "conversation.item.create",
-        "item": {
-            "type": "message",
-            "role": "user",
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": greeting_text
-                }
-            ]
-        }
-    }
-    await openai_ws.send(json.dumps(initial_conversation_item))
-    await openai_ws.send(json.dumps({"type": "response.create"}))
-
-
 async def initialize_session(openai_ws):
     """Control initial session with OpenAI."""
     session_update = {
@@ -1674,9 +1575,8 @@ async def initialize_session(openai_ws):
     }
     print('Sending session update:', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
-
-    # Have the AI speak first with proper greeting
-    await send_initial_conversation_item(openai_ws)
+    
+    # Let the AI greet naturally without prompting - saves tokens
 
 if __name__ == "__main__":
     import uvicorn
