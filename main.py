@@ -72,14 +72,18 @@ SYSTEM_MESSAGES = {
         "Bạn có khả năng kể chuyện cười vui vẻ khi phù hợp. "
         "Luôn giữ thái độ tích cực và hỗ trợ người dùng một cách tốt nhất. "
         "Bạn có thể tìm kiếm web để cung cấp thông tin mới nhất khi được yêu cầu. "
-        "QUAN TRỌNG: Luôn trả lời bằng tiếng Việt trừ khi người dùng yêu cầu ngôn ngữ khác."
+        "QUAN TRỌNG: Khi bạn nhận được kết quả từ function web_search hoặc get_current_time, "
+        "hãy LUÔN sử dụng thông tin đó để trả lời người dùng. Đọc to và rõ ràng các kết quả tìm kiếm. "
+        "Luôn trả lời bằng tiếng Việt."
     ),
     'en': (
         "You are a helpful and bubbly AI assistant who loves to chat about "
         "anything the user is interested in and is prepared to offer them facts. "
         "You have a penchant for dad jokes, owl jokes, and rickrolling – subtly. "
         "Always stay positive, but work in a joke when appropriate. "
-        "You have access to web search to find current information when asked."
+        "You have access to web search to find current information when asked. "
+        "IMPORTANT: When you receive results from web_search or get_current_time functions, "
+        "ALWAYS use that information to answer the user. Read out the search results clearly."
     )
 }
 
@@ -90,7 +94,8 @@ LOG_EVENT_TYPES = [
     'response.done', 'input_audio_buffer.committed',
     'input_audio_buffer.speech_stopped', 'input_audio_buffer.speech_started',
     'session.created', 'response.function_call_arguments.done',
-    'response.output_item.added'
+    'response.output_item.added', 'conversation.item.created',
+    'response.created'
 ]
 SHOW_TIMING_MATH = False
 
@@ -564,10 +569,11 @@ async def handle_media_stream(websocket: WebSocket):
                                     }
                                 }
                                 await openai_ws.send(json.dumps(function_output))
+                                logger.info(f"Sent time result to OpenAI: {result}")
                                 
-                                # Trigger a response generation
+                                # Trigger a response generation with explicit instructions
                                 await openai_ws.send(json.dumps({"type": "response.create"}))
-                                logger.info(f"Function {name} completed and response triggered")
+                                logger.info(f"Function {name} completed and voice response triggered")
                                 
                             elif name == 'web_search':
                                 query = args.get('query', '')
@@ -584,10 +590,12 @@ async def handle_media_stream(websocket: WebSocket):
                                     }
                                 }
                                 await openai_ws.send(json.dumps(function_output))
+                                logger.info(f"Sent web search results to OpenAI (length: {len(result)} chars)")
+                                print(f"\n📤 Sent to OpenAI: {result[:200]}...")
                                 
                                 # Trigger a response generation
                                 await openai_ws.send(json.dumps({"type": "response.create"}))
-                                logger.info(f"Function {name} completed and response triggered")
+                                logger.info(f"Function {name} completed and voice response triggered")
                             else:
                                 logger.warning(f"Unknown function called: {name}")
                         except Exception as e:
