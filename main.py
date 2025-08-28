@@ -1339,11 +1339,8 @@ async def handle_media_stream(websocket: WebSocket):
                             total_output_cost = (total_tokens['output_tokens'] / 1_000_000) * pricing['output']
                             cumulative_cost = total_input_cost + total_output_cost
                             
-                            # Log token usage with costs
-                            print(f"\n📊 TOKEN USAGE UPDATE:")
-                            print(f"   This response: Input: {input_tokens:,} (${'${:.4f}'.format(input_cost)}) | Output: {output_tokens:,} (${'${:.4f}'.format(output_cost)}) | Cost: ${'${:.4f}'.format(total_cost)}")
-                            print(f"   Session total: Input: {total_tokens['input_tokens']:,} (${'${:.4f}'.format(total_input_cost)}) | Output: {total_tokens['output_tokens']:,} (${'${:.4f}'.format(total_output_cost)}) | Total: {total_tokens['total_tokens']:,} tokens")
-                            print(f"   💰 Cumulative cost: ${'${:.4f}'.format(cumulative_cost)} (Model: {GPT_MODEL})")
+                            # Log token usage with costs in requested format
+                            print(f"\nToken update [{GPT_MODEL}] - Input: {total_tokens['input_tokens']:,} (${'${:.2f}'.format(total_input_cost)}), Output: {total_tokens['output_tokens']:,} (${'${:.2f}'.format(total_output_cost)}), Total: {total_tokens['total_tokens']:,} (${'${:.2f}'.format(cumulative_cost)})")
                     
                     # Track rate limits
                     if response.get('type') == 'rate_limits.updated':
