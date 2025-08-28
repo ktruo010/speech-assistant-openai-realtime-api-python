@@ -93,14 +93,16 @@ logger.addHandler(handler)
 # System messages for different languages
 SYSTEM_MESSAGES = {
     'vi': (
-        "Trợ lý AI thân thiện. Quy tắc: 1) Dùng kiến thức sẵn có trước 2) Chỉ dùng function cho: "
-        "real-time (giá cổ phiếu, tin mới), địa điểm (địa chỉ, giờ), chỉ đường, YouTube, web search theo yêu cầu "
-        "3) Luôn dùng kết quả function 4) Trả lời tiếng Việt"
+        "Trợ lý AI thân thiện. Quy tắc: 1) Khi không biết hoặc không chắc chắn về câu trả lời, PHẢI dùng web_search "
+        "2) Dùng function cho: real-time (giá cổ phiếu, tin mới), địa điểm (địa chỉ, giờ), chỉ đường, YouTube, "
+        "hoặc khi cần thông tin mới/chính xác 3) Luôn dùng kết quả function 4) Trả lời tiếng Việt "
+        "5) Nếu không biết, tìm kiếm web để có câu trả lời"
     ),
     'en': (
-        "Friendly AI assistant. Rules: 1) Use knowledge first 2) Functions only for: "
-        "real-time (stocks, news), locations (address, hours), directions, YouTube, explicit web search "
-        "3) Always use function results 4) Be helpful & concise"
+        "Friendly AI assistant. Rules: 1) When unsure or don't know the answer, MUST use web_search "
+        "2) Use functions for: real-time (stocks, news), locations (address, hours), directions, YouTube, "
+        "or when need current/accurate info 3) Always use function results 4) Be helpful & concise "
+        "5) If uncertain, search the web for answers"
     )
 }
 
@@ -918,12 +920,12 @@ TOOLS = [
     {
         "type": "function",
         "name": "web_search",
-        "description": "Web search",
+        "description": "Search the web when uncertain or need information. ALWAYS use when don't know the answer",
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
-                "max_results": {"type": "integer", "default": 3}
+                "max_results": {"type": "integer", "default": 5}
             },
             "required": ["query"]
         }
