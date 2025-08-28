@@ -131,8 +131,11 @@ def get_place_info(place_name: str, location: str = "") -> str:
             "languageCode": "vi" if LANGUAGE == 'vi' else "en"
         }
         
-        # Execute the search
-        places_result = service.places().searchText(body=search_request).execute()
+        # Execute the search with field mask
+        places_result = service.places().searchText(
+            body=search_request,
+            fields="places.displayName,places.formattedAddress,places.internationalPhoneNumber,places.nationalPhoneNumber,places.websiteUri,places.regularOpeningHours,places.rating,places.userRatingCount,places.businessStatus,places.id"
+        ).execute()
         
         if not places_result.get('places'):
             if LANGUAGE == 'vi':
