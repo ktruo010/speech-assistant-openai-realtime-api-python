@@ -42,6 +42,32 @@ MAX_CALL_DURATION = int(os.getenv('MAX_CALL_DURATION', 3600))  # Default 1 hour 
 PASSCODE = os.getenv('PASSCODE')  # Optional passcode for call authentication
 MAX_PASSCODE_ATTEMPTS = int(os.getenv('MAX_PASSCODE_ATTEMPTS', 3))  # Max attempts before hanging up
 TIMEZONE = os.getenv('TIMEZONE', 'Asia/Ho_Chi_Minh')  # Default to Vietnam timezone
+GPT_MODEL = os.getenv('GPT_MODEL', 'gpt-4o-realtime-preview')  # OpenAI model selection
+
+# Pricing per 1M tokens (as of Oct 2024)
+MODEL_PRICING = {
+    'gpt-4o-realtime-preview': {
+        'input': 5.00,   # $5.00 per 1M input tokens
+        'output': 20.00  # $20.00 per 1M output tokens
+    },
+    'gpt-4o-realtime-preview-2024-10-01': {
+        'input': 5.00,   # $5.00 per 1M input tokens
+        'output': 20.00  # $20.00 per 1M output tokens
+    },
+    'gpt-4o-mini-realtime-preview': {
+        'input': 0.60,   # $0.60 per 1M input tokens
+        'output': 2.40   # $2.40 per 1M output tokens
+    },
+    'gpt-4o-mini-realtime-preview-2024-12-17': {
+        'input': 0.60,   # $0.60 per 1M input tokens
+        'output': 2.40   # $2.40 per 1M output tokens
+    },
+    # Default pricing if model not found
+    'default': {
+        'input': 5.00,
+        'output': 20.00
+    }
+}
 
 # Configure timezone
 try:
@@ -1168,8 +1194,11 @@ async def handle_media_stream(websocket: WebSocket):
     print(f"\n📞 Client connected at {get_current_time_str()}")
     await websocket.accept()
 
+    # Log the model being used
+    print(f"🤖 Connecting to OpenAI Realtime API with model: {GPT_MODEL}")
+    
     async with websockets.connect(
-        'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
+        f'wss://api.openai.com/v1/realtime?model={GPT_MODEL}',
         extra_headers={
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "OpenAI-Beta": "realtime=v1"
@@ -1184,6 +1213,13 @@ async def handle_media_stream(websocket: WebSocket):
         mark_queue = []
         response_start_timestamp_twilio = None
         call_start_time = asyncio.get_event_loop().time()
+        
+        # Token tracking
+        total_tokens = {
+            'input_tokens': 0,
+            'output_tokens': 0,
+            'total_tokens': 0
+        }
         
         # Log call duration settings
         if MAX_CALL_DURATION:
@@ -1277,6 +1313,52 @@ async def handle_media_stream(websocket: WebSocket):
                     response = json.loads(openai_message)
                     if response['type'] in LOG_EVENT_TYPES:
                         print(f"Received event: {response['type']}", response)
+                    
+                    # Track token usage from response.done events
+                    if response.get('type') == 'response.done' and 'response' in response:
+                        if response['response'] and 'usage' in response['response']:
+                            usage = response['response']['usage']
+                            input_tokens = usage.get('input_tokens', 0)
+                            output_tokens = usage.get('output_tokens', 0)
+                            
+                            # Update totals
+                            total_tokens['input_tokens'] += input_tokens
+                            total_tokens['output_tokens'] += output_tokens
+                            total_tokens['total_tokens'] += (input_tokens + output_tokens)
+                            
+                            # Get pricing for current model
+                            pricing = MODEL_PRICING.get(GPT_MODEL, MODEL_PRICING['default'])
+                            
+                            # Calculate costs (per 1M tokens)
+                            input_cost = (input_tokens / 1_000_000) * pricing['input']
+                            output_cost = (output_tokens / 1_000_000) * pricing['output']
+                            total_cost = input_cost + output_cost
+                            
+                            # Calculate cumulative costs
+                            total_input_cost = (total_tokens['input_tokens'] / 1_000_000) * pricing['input']
+                            total_output_cost = (total_tokens['output_tokens'] / 1_000_000) * pricing['output']
+                            cumulative_cost = total_input_cost + total_output_cost
+                            
+                            # Log token usage with costs
+                            print(f"\n📊 TOKEN USAGE UPDATE:")
+                            print(f"   This response: Input: {input_tokens:,} (${'${:.4f}'.format(input_cost)}) | Output: {output_tokens:,} (${'${:.4f}'.format(output_cost)}) | Cost: ${'${:.4f}'.format(total_cost)}")
+                            print(f"   Session total: Input: {total_tokens['input_tokens']:,} (${'${:.4f}'.format(total_input_cost)}) | Output: {total_tokens['output_tokens']:,} (${'${:.4f}'.format(total_output_cost)}) | Total: {total_tokens['total_tokens']:,} tokens")
+                            print(f"   💰 Cumulative cost: ${'${:.4f}'.format(cumulative_cost)} (Model: {GPT_MODEL})")
+                    
+                    # Track rate limits
+                    if response.get('type') == 'rate_limits.updated':
+                        rate_limits = response.get('rate_limits', [])
+                        for limit in rate_limits:
+                            if limit.get('name') == 'tokens':
+                                remaining = limit.get('remaining', 0)
+                                limit_val = limit.get('limit', 40000)
+                                reset_seconds = limit.get('reset_seconds', 0)
+                                usage_pct = ((limit_val - remaining) / limit_val) * 100
+                                
+                                # Only show warnings when usage is high
+                                if usage_pct > 80:
+                                    print(f"\n⚠️  RATE LIMIT WARNING: {usage_pct:.1f}% used ({limit_val - remaining:,}/{limit_val:,} tokens)")
+                                    print(f"   Resets in {reset_seconds:.1f} seconds")
 
                     if response.get('type') == 'response.audio.delta' and 'delta' in response:
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
@@ -1556,6 +1638,34 @@ async def handle_media_stream(websocket: WebSocket):
                 mark_queue.append('responsePart')
 
         await asyncio.gather(receive_from_twilio(), send_to_twilio())
+        
+    # Log final session summary
+    call_duration = asyncio.get_event_loop().time() - call_start_time
+    duration_mins = call_duration / 60
+    
+    # Get pricing for current model
+    pricing = MODEL_PRICING.get(GPT_MODEL, MODEL_PRICING['default'])
+    total_input_cost = (total_tokens['input_tokens'] / 1_000_000) * pricing['input']
+    total_output_cost = (total_tokens['output_tokens'] / 1_000_000) * pricing['output']
+    total_cost = total_input_cost + total_output_cost
+    
+    print("\n" + "="*60)
+    print("📊 CALL SUMMARY")
+    print("="*60)
+    print(f"Model: {GPT_MODEL}")
+    print(f"Call duration: {duration_mins:.1f} minutes")
+    print(f"Token Usage:")
+    print(f"  Input tokens:  {total_tokens['input_tokens']:,}")
+    print(f"  Output tokens: {total_tokens['output_tokens']:,}")
+    print(f"  Total tokens:  {total_tokens['total_tokens']:,}")
+    print(f"Estimated OpenAI Cost:")
+    print(f"  Input:  ${'${:.4f}'.format(total_input_cost)} (${pricing['input']:.2f}/1M tokens)")
+    print(f"  Output: ${'${:.4f}'.format(total_output_cost)} (${pricing['output']:.2f}/1M tokens)")
+    print(f"  Total:  ${'${:.4f}'.format(total_cost)}")
+    print(f"Efficiency: {total_tokens['total_tokens'] / duration_mins:.0f} tokens/minute")
+    print("="*60)
+    
+    logger.info(f"Call ended - Model: {GPT_MODEL}, Duration: {duration_mins:.1f}min, Tokens: {total_tokens['total_tokens']:,}, Cost: ${'${:.4f}'.format(total_cost)}")
 
 async def initialize_session(openai_ws):
     """Control initial session with OpenAI."""
