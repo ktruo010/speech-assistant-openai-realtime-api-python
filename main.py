@@ -193,16 +193,16 @@ async def handle_incoming_call(request: Request):
             timeout=10,
             finish_on_key='#'
         )
-        gather.say("Xin chào. Vui lòng nhập mật khẩu", language="vi-VN")
+        gather.say("Xin chào. Vui lòng nhập mật khẩu", language="vi")
         
         # If user doesn't enter anything, repeat the prompt
-        response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi-VN")
+        response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi")
         response.hangup()
     else:
         # No passcode required, connect directly
-        response.say("Xin chào", language="vi-VN")
+        response.say("Xin chào", language="vi")
         response.pause(length=1)
-        response.say("Tôi có thể giúp gì cho bạn?", language="vi-VN")
+        response.say("Tôi có thể giúp gì cho bạn?", language="vi")
         
         connect = Connect()
         connect.stream(url=f'wss://{host}/media-stream')
@@ -228,9 +228,9 @@ async def verify_passcode(request: Request):
         logger.info("Passcode verified successfully")
         print("\n✅ Passcode verified successfully")
         
-        response.say("Mật khẩu đúng. Đang kết nối.", language="vi-VN")
+        response.say("Mật khẩu đúng. Đang kết nối.", language="vi")
         response.pause(length=1)
-        response.say("Tôi có thể giúp gì cho bạn?", language="vi-VN")
+        response.say("Tôi có thể giúp gì cho bạn?", language="vi")
         
         connect = Connect()
         connect.stream(url=f'wss://{host}/media-stream')
@@ -251,17 +251,17 @@ async def verify_passcode(request: Request):
             )
             
             remaining_attempts = MAX_PASSCODE_ATTEMPTS - attempt
-            gather.say(f"Mật khẩu không đúng. Bạn còn {remaining_attempts} lần thử. Vui lòng nhập lại mật khẩu.", language="vi-VN")
+            gather.say(f"Mật khẩu không đúng. Bạn còn {remaining_attempts} lần thử. Vui lòng nhập lại mật khẩu.", language="vi")
             
             # If user doesn't enter anything
-            response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi-VN")
+            response.say("Không nhận được mật khẩu. Tạm biệt.", language="vi")
             response.hangup()
         else:
             # Max attempts reached - hang up
             logger.warning("Max passcode attempts reached. Hanging up.")
             print("\n🚫 Max passcode attempts reached. Hanging up.")
             
-            response.say("Đã vượt quá số lần thử cho phép. Tạm biệt.", language="vi-VN")
+            response.say("Đã vượt quá số lần thử cho phép. Tạm biệt.", language="vi")
             response.hangup()
     
     return HTMLResponse(content=str(response), media_type="application/xml")
