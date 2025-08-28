@@ -24,7 +24,6 @@ jobs:
 
     - name: Inject env vars
       run: |
-        echo "TWILIO_PHONE_NUMBER=${{ secrets.TWILIO_PHONE_NUMBER }}" >> .env
         echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
 
     - name: Install dependencies
@@ -45,4 +44,5 @@ jobs:
         pm2 start main.py --name "speech-assistant" --interpreter python3
         pm2 save
         pm2 status speech-assistant
+        pm2 logs speech-assistant --lines 10 --nostream
         
